@@ -2,7 +2,6 @@
 
 LLVMベースで C/Rust/Zig/Odin と深く相互運用でき、Arduino言語並みに書きやすい文法を持つ汎用プログラミング言語です。Wasm経由でReact/TypeScriptとも連携できることを目指しています。
 
-> 詳細な設計思想・仕様は [nagiscript-language-design.md](./nagiscript-language-design.md) を参照してください。
 
 ## 特徴
 
@@ -20,10 +19,10 @@ LLVMベースで C/Rust/Zig/Odin と深く相互運用でき、Arduino言語並�
 | `ngs_lexer` / `ngs_ast` / `ngs_parser` | ✅ 完成（`.ngs` / `.ngsx` 両対応） |
 | `ngs_sema`（型検査・モノモーフ化・網羅性検査） | ✅ 完成 |
 | `ngs_ir`（中間表現への lowering） | ✅ 完成 |
-| `ngs_codegen_llvm` | 🚧 未実装 |
-| `ngs_codegen_wasm` | 🚧 未実装 |
-| `ngs_std`（ランタイム） | 🚧 未実装 |
-| `nagiscript` CLI | 🚧 未実装 |
+| `ngs_codegen_llvm` | 未実装 |
+| `ngs_codegen_wasm` | 未実装 |
+| `ngs_std`（ランタイム） | 未実装 |
+| `nagiscript` CLI | 未実装 |
 
 **現在、実行可能バイナリはまだありません。** フロントエンド（解析〜IR生成）をライブラリとして利用できます。
 
