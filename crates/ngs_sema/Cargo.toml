@@ -1,0 +1,8 @@
+[package]
+name = "ngs_sema"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ngs_ast = { path = "../ngs_ast" }
+ngs_parser = { path = "../ngs_parser" }

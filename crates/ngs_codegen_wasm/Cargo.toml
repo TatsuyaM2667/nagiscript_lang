@@ -1,0 +1,7 @@
+[package]
+name = "ngs_codegen_wasm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ngs_ir = { path = "../ngs_ir" }

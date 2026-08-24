@@ -1,0 +1,12 @@
+[package]
+name = "ngs_ir"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ngs_ast = { path = "../ngs_ast" }
+ngs_sema = { path = "../ngs_sema" }
+
+[dev-dependencies]
+ngs_parser = { path = "../ngs_parser" }
+ngs_lexer = { path = "../ngs_lexer" }

@@ -1,0 +1,18 @@
+[package]
+name = "ngs_driver"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "nagiscript"
+path = "src/main.rs"
+
+[dependencies]
+ngs_ast = { path = "../ngs_ast" }
+ngs_lexer = { path = "../ngs_lexer" }
+ngs_parser = { path = "../ngs_parser" }
+ngs_sema = { path = "../ngs_sema" }
+ngs_ir = { path = "../ngs_ir" }
+ngs_codegen_llvm = { path = "../ngs_codegen_llvm" }
+ngs_codegen_wasm = { path = "../ngs_codegen_wasm" }
+ngs_std = { path = "../ngs_std" }
