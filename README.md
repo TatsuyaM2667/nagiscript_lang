@@ -2,7 +2,7 @@
 
 LLVMベースで C/Rust/Zig/Odin と深く相互運用でき、Arduino言語並みに書きやすい文法を持つ汎用プログラミング言語です。Wasm経由でReact/TypeScriptとも連携できることを目指しています。
 
-> 詳細な設計思想・仕様は [nagiscript-language-design.md](./nagiscript-language-design.md) を参照してください。
+
 
 ## 特徴
 
