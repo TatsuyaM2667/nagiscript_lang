@@ -25,12 +25,16 @@ function arch() {
   throw new Error(`Unsupported arch: ${a}`);
 }
 
+function isWin() {
+  return process.platform === "win32";
+}
+
 function binDir() {
   return path.join(__dirname, "bin");
 }
 
 function binPath() {
-  const ext = process.platform === "win32" ? ".exe" : "";
+  const ext = isWin() ? ".exe" : "";
   return path.join(binDir(), BIN_NAME + ext);
 }
 
@@ -67,7 +71,7 @@ function download(url, dest) {
 async function tryDownloadPrebuilt() {
   const tag = `v${VERSION}`;
   const target = `${arch()}-${platform()}`;
-  const ext = process.platform === "win32" ? ".zip" : ".tar.gz";
+  const ext = isWin() ? ".zip" : ".tar.gz";
   const assetName = `${BIN_NAME}-${tag}-${target}${ext}`;
   const url = `https://github.com/${REPO}/releases/download/${tag}/${assetName}`;
 
@@ -81,27 +85,52 @@ async function tryDownloadPrebuilt() {
     if (ext === ".tar.gz") {
       execSync(`tar -xzf "${tmpFile}" -C "${binDir()}"`, { stdio: "inherit" });
     } else {
-      execSync(`unzip -o "${tmpFile}" -d "${binDir()}"`, { stdio: "inherit" });
+      execSync(`powershell -Command "Expand-Archive -Path '${tmpFile}' -DestinationPath '${binDir()}' -Force"`, { stdio: "inherit" });
     }
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    fs.chmodSync(binPath(), 0o755);
+    if (!isWin()) fs.chmodSync(binPath(), 0o755);
     return true;
   } catch {
     return false;
   }
 }
 
+function cargoBinPath() {
+  // Find where cargo installs binaries
+  if (isWin()) {
+    const home = process.env.USERPROFILE || path.join("C:", "Users", process.env.USERNAME || "");
+    return path.join(home, ".cargo", "bin");
+  }
+  return path.join(process.env.HOME || "/root", ".cargo", "bin");
+}
+
+function findCargoBinary() {
+  const binDirPath = cargoBinPath();
+  const ext = isWin() ? ".exe" : "";
+  const candidate = path.join(binDirPath, BIN_NAME + ext);
+  if (fs.existsSync(candidate)) return candidate;
+  // Fallback: which/where
+  try {
+    const cmd = isWin() ? `where ${BIN_NAME}` : `which ${BIN_NAME}`;
+    return execSync(cmd, { encoding: "utf8" }).trim().split("\n")[0];
+  } catch {
+    return null;
+  }
+}
+
 function tryCargoInstall() {
   console.log("  Prebuilt not found. Building from source with cargo...");
   try {
-    execSync(`cargo install --git https://github.com/${REPO}.git ngs_driver --locked`, {
+    execSync(`cargo install --git https://github.com/${REPO}.git ngs_driver`, {
       stdio: "inherit",
     });
-    // cargo install puts it in ~/.cargo/bin, create a symlink
-    const cargoBin = execSync("which nagiscript", { encoding: "utf8" }).trim();
-    const dest = binPath();
-    fs.copyFileSync(cargoBin, dest);
-    fs.chmodSync(dest, 0o755);
+    const src = findCargoBinary();
+    if (!src) {
+      console.error("  cargo install succeeded but binary not found");
+      return false;
+    }
+    fs.copyFileSync(src, binPath());
+    if (!isWin()) fs.chmodSync(binPath(), 0o755);
     return true;
   } catch {
     return false;
@@ -138,7 +167,7 @@ async function main() {
 
   console.error(
     "\nFailed to install nagiscript. Please install manually:\n" +
-      "  cargo install --git https://github.com/" + REPO + ".git -p ngs_driver\n"
+      "  cargo install --git https://github.com/" + REPO + ".git ngs_driver\n"
   );
   process.exit(1);
 }

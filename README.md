@@ -14,38 +14,43 @@ LLVMベースで C/Rust/Zig/Odin と深く相互運用でき、Arduino言語並�
 - **`.ngsx` JSX構文**: UIコンポーネントをJSX風に書ける（`.ts` に対する `.tsx` と同じ位置付け）
 - **`val` / `var`**: イミュータブル変数は `val`、ミュータブル変数は `var`
 
-## インストール
+## クイックスタート
 
-### cargo install（推奨）
+### 1. インストール
 
 ```bash
+# npm（推奨）
+npm install -g @nagiscript/cli
+
+# cargo
 cargo install --git https://github.com/TatsuyaM2667/nagiscript_lang.git ngs_driver
 ```
 
-### npm
+### 2. プロジェクトを作成
 
 ```bash
-npm install -g @nagiscript/cli
+nagiscript init hello
+cd hello
 ```
 
-### git clone からビルド
+### 3. 実行
 
 ```bash
-git clone https://github.com/TatsuyaM2667/nagiscript_lang.git
-cd nagiscript_lang
-cargo install --path crates/ngs_driver
-```
-
-### 動作確認
-
-```bash
-nagiscript --help
-
-# プロジェクトを初期化して実行
-nagiscript init my-app
-cd my-app
 nagiscript run main.ngs
-# => Hello from my-app!
+# => Hello from hello!
+```
+
+これで完了。エディタで `main.ngs` を開いて触ってみてください。
+
+### ビルドコマンド一览
+
+```bash
+nagiscript check main.ngs   # 型チェックのみ
+nagiscript build main.ngs   # ネイティブバイナリ生成
+nagiscript run main.ngs     # ビルド＆実行
+nagiscript ir main.ngs      # IR ダンプ（デバッグ用）
+nagiscript wasm main.ngs    # Wasm/WAT 生成
+nagiscript dts main.ngs     # TypeScript 型定義生成
 ```
 
 ## 実装状況
@@ -61,13 +66,6 @@ nagiscript run main.ngs
 | `nagiscript` CLI | ✅ 完成（check / ir / build / run / dts / wasm / init） |
 
 **テスト**: 96件全てパス
-
-## セットアップ
-
-```bash
-# Rust 安定版ツールチェーンが必要です
-cargo build --release
-```
 
 ### 必要ツール（ビルド時）
 
