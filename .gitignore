@@ -5,7 +5,7 @@ target/
 nagiscript-language-design.md
 nagiscript-language-addendum.md
 nagiscript-language-addendum2.md
-docs
+
 # ビルド出力
 *.ll
 *.o
