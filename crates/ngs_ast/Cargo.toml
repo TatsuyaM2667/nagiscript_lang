@@ -2,5 +2,10 @@
 name = "ngs_ast"
 version.workspace = true
 edition.workspace = true
+description = "AST and token definitions for NagiScript (NGS)"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+homepage.workspace = true
 
 [dependencies]

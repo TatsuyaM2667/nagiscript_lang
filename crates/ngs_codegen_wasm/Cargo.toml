@@ -2,6 +2,11 @@
 name = "ngs_codegen_wasm"
 version.workspace = true
 edition.workspace = true
+description = "WebAssembly code generator for NagiScript (NGS) — WAT output + TypeScript declarations"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+homepage.workspace = true
 
 [dependencies]
-ngs_ir = { path = "../ngs_ir" }
+ngs_ir.workspace = true

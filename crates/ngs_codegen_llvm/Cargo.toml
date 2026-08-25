@@ -2,8 +2,13 @@
 name = "ngs_codegen_llvm"
 version.workspace = true
 edition.workspace = true
+description = "LLVM IR code generator for NagiScript (NGS)"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+homepage.workspace = true
 
 [dependencies]
-ngs_ir = { path = "../ngs_ir" }
-ngs_parser = { path = "../ngs_parser" }
-ngs_sema = { path = "../ngs_sema" }
+ngs_ir.workspace = true
+ngs_parser.workspace = true
+ngs_sema.workspace = true

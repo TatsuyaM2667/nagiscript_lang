@@ -16,6 +16,21 @@ members = [
 version = "0.2.0"
 edition = "2021"
 license = "MIT"
+repository = "https://github.com/TatsuyaM2667/nagiscript_lang.git"
+homepage = "https://github.com/TatsuyaM2667/nagiscript_lang"
+description = "NagiScript (NGS) compiler"
+keywords = ["nagiscript", "ngs", "compiler", "llvm", "wasm"]
+
+[workspace.dependencies]
+ngs_ast = { version = "0.2.0", path = "crates/ngs_ast" }
+ngs_lexer = { version = "0.2.0", path = "crates/ngs_lexer" }
+ngs_parser = { version = "0.2.0", path = "crates/ngs_parser" }
+ngs_sema = { version = "0.2.0", path = "crates/ngs_sema" }
+ngs_ir = { version = "0.2.0", path = "crates/ngs_ir" }
+ngs_codegen_llvm = { version = "0.2.0", path = "crates/ngs_codegen_llvm" }
+ngs_codegen_wasm = { version = "0.2.0", path = "crates/ngs_codegen_wasm" }
+ngs_std = { version = "0.2.0", path = "crates/ngs_std" }
+ngs_driver = { version = "0.2.0", path = "crates/ngs_driver" }
 
 [profile.release]
 opt-level = 3

@@ -2,6 +2,11 @@
 name = "ngs_lexer"
 version.workspace = true
 edition.workspace = true
+description = "Lexer for NagiScript (NGS) — tokenizes .ngs and .ngsx files"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+homepage.workspace = true
 
 [dependencies]
-ngs_ast = { path = "../ngs_ast" }
+ngs_ast.workspace = true

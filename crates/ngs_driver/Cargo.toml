@@ -2,17 +2,22 @@
 name = "ngs_driver"
 version.workspace = true
 edition.workspace = true
+description = "CLI driver for NagiScript (NGS) — check, build, run, wasm, dts, init"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "nagiscript"
 path = "src/main.rs"
 
 [dependencies]
-ngs_ast = { path = "../ngs_ast" }
-ngs_lexer = { path = "../ngs_lexer" }
-ngs_parser = { path = "../ngs_parser" }
-ngs_sema = { path = "../ngs_sema" }
-ngs_ir = { path = "../ngs_ir" }
-ngs_codegen_llvm = { path = "../ngs_codegen_llvm" }
-ngs_codegen_wasm = { path = "../ngs_codegen_wasm" }
-ngs_std = { path = "../ngs_std" }
+ngs_ast.workspace = true
+ngs_lexer.workspace = true
+ngs_parser.workspace = true
+ngs_sema.workspace = true
+ngs_ir.workspace = true
+ngs_codegen_llvm.workspace = true
+ngs_codegen_wasm.workspace = true
+ngs_std.workspace = true

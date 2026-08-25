@@ -2,7 +2,12 @@
 name = "ngs_parser"
 version.workspace = true
 edition.workspace = true
+description = "Parser for NagiScript (NGS) — produces AST from token stream"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+homepage.workspace = true
 
 [dependencies]
-ngs_ast = { path = "../ngs_ast" }
-ngs_lexer = { path = "../ngs_lexer" }
+ngs_ast.workspace = true
+ngs_lexer.workspace = true

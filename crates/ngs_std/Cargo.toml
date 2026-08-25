@@ -2,3 +2,8 @@
 name = "ngs_std"
 version.workspace = true
 edition.workspace = true
+description = "Runtime library for NagiScript (NGS) — C runtime for print, alloc, Rc, List"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+homepage.workspace = true

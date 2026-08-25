@@ -2,11 +2,16 @@
 name = "ngs_ir"
 version.workspace = true
 edition.workspace = true
+description = "Intermediate representation and lowering for NagiScript (NGS)"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+homepage.workspace = true
 
 [dependencies]
-ngs_ast = { path = "../ngs_ast" }
-ngs_sema = { path = "../ngs_sema" }
+ngs_ast.workspace = true
+ngs_sema.workspace = true
 
 [dev-dependencies]
-ngs_parser = { path = "../ngs_parser" }
-ngs_lexer = { path = "../ngs_lexer" }
+ngs_parser.workspace = true
+ngs_lexer.workspace = true
