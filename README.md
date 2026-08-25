@@ -14,6 +14,40 @@ LLVMベースで C/Rust/Zig/Odin と深く相互運用でき、Arduino言語並�
 - **`.ngsx` JSX構文**: UIコンポーネントをJSX風に書ける（`.ts` に対する `.tsx` と同じ位置付け）
 - **`val` / `var`**: イミュータブル変数は `val`、ミュータブル変数は `var`
 
+## インストール
+
+### cargo install（推奨）
+
+```bash
+cargo install --git https://github.com/TatsuyaM2667/nagiscript_lang.git ngs_driver
+```
+
+### npm
+
+```bash
+npm install -g @nagiscript/cli
+```
+
+### git clone からビルド
+
+```bash
+git clone https://github.com/TatsuyaM2667/nagiscript_lang.git
+cd nagiscript_lang
+cargo install --path crates/ngs_driver
+```
+
+### 動作確認
+
+```bash
+nagiscript --help
+
+# プロジェクトを初期化して実行
+nagiscript init my-app
+cd my-app
+nagiscript run main.ngs
+# => Hello from my-app!
+```
+
 ## 実装状況
 
 | コンポーネント | 状態 |
@@ -291,7 +325,7 @@ nagiscript_lang/
 │   ├── ngs_codegen_wasm/   # NGS-IR → Wasm/WAT + TypeScript 型定義
 │   ├── ngs_driver/         # CLI（check / ir / build / run / dts / wasm / init）
 │   └── ngs_std/            # C ランタイム（print, alloc, Rc, List 等）
-├── examples/               # サンプル .ngスクリプト
+├── examples/               # サンプル .ngs スクリプト
 │   ├── hello.ngs           # Hello World
 │   ├── basics.ngs          # 基本文法デモ
 │   ├── generics.ngs        # ジェネリクスデモ
@@ -299,6 +333,10 @@ nagiscript_lang/
 │   ├── list_demo.ngs       # List コレクションデモ
 │   ├── unsafe_demo.ngs     # unsafe / 生ポインタデモ
 │   └── react-demo/         # Wasm×React サンプル（予定）
+├── npm/                    # @nagiscript/cli npm パッケージ
+│   ├── package.json
+│   ├── install.js          # postinstall（prebuilt ダウンロード or cargo build）
+│   └── bin/nagiscript.js   # ラッパースクリプト
 ├── tests/
 │   ├── lexer/              # 字句解析テスト（17件）
 │   ├── parser/             # 構文解析テスト（25件）

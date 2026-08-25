@@ -283,10 +283,10 @@ impl<'a> Lowerer<'a> {
         let val = self.run_block(&mut ctx, &body)?;
 
         if matches!(ctx.b.func.blocks[ctx.b.cur].term, Term::Unreachable) {
-            if let Some(v) = val {
-                ctx.b.ret(Some(v));
-            } else if mf.ret == Ty::Void {
+            if mf.ret == Ty::Void {
                 ctx.b.ret(None);
+            } else if let Some(v) = val {
+                ctx.b.ret(Some(v));
             } else {
                 return Err(format!(
                     "function `{}` can reach the end of its body without returning `{}`",

@@ -1,0 +1,28 @@
+{
+  "name": "@nagiscript/cli",
+  "version": "0.2.0",
+  "description": "NagiScript (NGS) compiler CLI — LLVM-native + Wasm",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TatsuyaM2667/nagiscript_lang.git"
+  },
+  "bin": {
+    "nagiscript": "./bin/nagiscript.js"
+  },
+  "files": [
+    "bin/",
+    "install.js"
+  ],
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "keywords": [
+    "nagiscript",
+    "ngs",
+    "compiler",
+    "llvm",
+    "wasm",
+    "programming-language"
+  ]
+}

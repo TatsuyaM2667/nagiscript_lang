@@ -20,5 +20,9 @@ nagiscript-language-addendum2.md
 *~
 .DS_Store
 
+# npm パッケージ内バイナリ
+npm/bin/nagiscript
+npm/bin/nagiscript.exe
+
 # Wasm テスト出力
 tests/wasm/output/
