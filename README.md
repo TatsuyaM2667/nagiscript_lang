@@ -22,7 +22,10 @@ LLVMベースで C/Rust/Zig/Odin と深く相互運用でき、Arduino言語並�
 # npm（推奨）
 npm install -g @nagiscript/cli
 
-# cargo
+# cargo（crates.io）
+cargo install ngs_driver
+
+# cargo（GitHub から直接）
 cargo install --git https://github.com/TatsuyaM2667/nagiscript_lang.git ngs_driver
 ```
 
