@@ -20,15 +20,15 @@ fn add(a: i32, b: i32) -> i32 {
 }
 
 fn main() {
-    let x = 10
+    val x = 10
     var y = 20
     y = y + 1
     print(add(x, y))
-    let p = Point { x: 1.0, y: 2.0 }
+    val p = Point { x: 1.0, y: 2.0 }
     for i in 0..3 {
         print(i)
     }
-    let r = if x > 5 { 1 } else { 2 }
+    val r = if x > 5 { 1 } else { 2 }
 }
 "#;
     let f = ngs_parser::parse_source(src, "test.ngs").unwrap();

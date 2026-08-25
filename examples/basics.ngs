@@ -1,0 +1,43 @@
+// Basic language features demonstration
+
+fn add(a: i32, b: i32) -> i32 {
+    return a + b
+}
+
+struct Point {
+    x: f32
+    y: f32
+}
+
+enum Shape {
+    Circle(f32)
+    Rect(f32, f32)
+    Empty
+}
+
+fn area(s: Shape) -> f32 {
+    val result = match s {
+        Circle(rad) => rad * 3.0,
+        Rect(w, h) => (w * h) as f64,
+        _ => 0.0,
+    }
+    return result
+}
+
+fn main() {
+    val x = 10
+    var y = 20
+    y = y + 1
+    print(add(x, y))
+
+    val p = Point { x: 3.0, y: 4.0 }
+    print(p.x)
+    print(p.y)
+
+    val s = Shape.Circle(5.0)
+    print(area(s))
+
+    for i in 0..5 {
+        print(i)
+    }
+}

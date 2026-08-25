@@ -1,4 +1,24 @@
+# Rust
+target/
+
+# 設計ドキュメント（リポジトリにコミットしない）
 nagiscript-language-design.md
 nagiscript-language-addendum.md
-tests
-target
+nagiscript-language-addendum2.md
+
+# ビルド出力
+*.ll
+*.o
+*.wasm
+*.wat
+*.d.ts
+!crates/ngs_codegen_wasm/templates/*.d.ts
+
+# 一時ファイル
+*.tmp
+*.swp
+*~
+.DS_Store
+
+# Wasm テスト出力
+tests/wasm/output/

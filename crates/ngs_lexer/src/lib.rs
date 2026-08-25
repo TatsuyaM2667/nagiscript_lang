@@ -395,7 +395,7 @@ fn keyword_or_ident(text: &[u8]) -> TokenKind {
     use TokenKind::*;
     match text {
         b"fn" => KwFn,
-        b"let" => KwLet,
+        b"val" => KwLet,
         b"var" => KwVar,
         b"if" => KwIf,
         b"else" => KwElse,

@@ -1,0 +1,21 @@
+// Unsafe operations demonstration
+
+fn read_from_ptr(ptr: *i32) -> i32 {
+    unsafe {
+        return *ptr
+    }
+}
+
+fn write_to_ptr(ptr: *i32, v: i32) {
+    unsafe {
+        *ptr = v
+    }
+}
+
+fn main() {
+    var x = 42
+    val ptr = &&x as *i32
+    print(read_from_ptr(ptr))
+    write_to_ptr(ptr, 100)
+    print(x)
+}

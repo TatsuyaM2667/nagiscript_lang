@@ -1652,17 +1652,17 @@ fn quad(a: i32) -> i32 {
 extern "C" fn puts(s: string);
 
 export "C" fn answer() -> i32 {
-    let p = Point { x: 3, y: 4 };
+    val p = Point { x: 3, y: 4 };
     var total = p.x + p.y;
-    let arr = [1, 2, 3];
+    val arr = [1, 2, 3];
     total += arr[2];
-    let l: List<i32> = List.new();
+    val l: List<i32> = List.new();
     l.push(10);
     l.push(20);
     total = total + l.get(1);
-    let r = Rc.new(9);
-    let s: Shape = Shape.Rect(2, 5);
-    let area = match s {
+    val r = Rc.new(9);
+    val s: Shape = Shape.Rect(2, 5);
+    val area = match s {
         Circle(rad) => rad * 3.0,
         Rect(w, h) => (w * h) as f64,
         _ => 0.0,
@@ -1681,9 +1681,9 @@ export "C" fn answer() -> i32 {
         if k == 1 { continue; }
         total = total + k;
     }
-    let name = "core";
+    val name = "core";
     if name == "core" { total = total + 1; }
-    let m = match total { 40 => 1, _ => 0 };
+    val m = match total { 40 => 1, _ => 0 };
     return total + m - 45;
 }
 "#;

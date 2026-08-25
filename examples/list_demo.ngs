@@ -1,0 +1,15 @@
+// List demonstration
+
+fn main() {
+    val l: List<i32> = List.new()
+    l.push(10)
+    l.push(20)
+    l.push(30)
+
+    print(l.len())
+    print(l.get(0))
+    print(l.get(1))
+
+    l.set(1, 99)
+    print(l.get(1))
+}

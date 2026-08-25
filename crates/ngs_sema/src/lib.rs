@@ -2662,7 +2662,7 @@ mod tests {
 
     #[test]
     fn normal_expressions_are_unaffected() {
-        let ok = check_src("fn main() { let x = ((((1 + 2) * 3)) - 4); println(x); }");
+        let ok = check_src("fn main() { val x = ((((1 + 2) * 3)) - 4); println(x); }");
         assert!(ok.is_ok(), "{:?}", ok.err().map(|es| es.iter().map(|e| e.msg.clone()).collect::<Vec<_>>()));
     }
 }

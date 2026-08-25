@@ -19,15 +19,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ngs_ir::IrProgram;
-use ngs_sema::TypedProgram;
 
 const USAGE: &str = "\
 nagiscript — NagiScript compiler
 
 USAGE:
-    nagiscript <COMMAND> <INPUT.ngs> [OPTIONS]
+    nagiscript <COMMAND> [ARGS] [OPTIONS]
 
 COMMANDS:
+    init     create a new NagiScript project (--template web|native|wasm)
     check    parse and type-check only
     ir       dump NGS-IR
     build    produce a native executable (llc + cc)
@@ -49,11 +49,22 @@ fn main() {
 }
 
 fn real_main(args: Vec<String>) -> i32 {
-    if args.is_empty() || args.iter().any(|a| a == "-h" || a == "--help") {
+    if args.is_empty() {
         eprint!("{USAGE}");
-        return if args.is_empty() { 2 } else { 0 };
+        return 2;
     }
     let cmd = args[0].as_str();
+
+    // init サブコマンドは特別扱い
+    if cmd == "init" {
+        return cmd_init(&args[1..]);
+    }
+
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        eprint!("{USAGE}");
+        return 0;
+    }
+
     let mut input: Option<PathBuf> = None;
     let mut output: Option<PathBuf> = None;
     let mut target: Option<String> = None;
@@ -347,6 +358,279 @@ fn build_native(
         let _ = std::fs::remove_file(&ll_path);
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// init サブコマンド: プロジェクトテンプレート生成
+// ---------------------------------------------------------------------------
+
+const INIT_USAGE: &str = "\
+nagiscript init — create a new NagiScript project
+
+USAGE:
+    nagiscript init [OPTIONS] [NAME]
+
+OPTIONS:
+    --template <TYPE>   template type: web, native, wasm (default: native)
+    -h, --help          show this help
+";
+
+fn cmd_init(args: &[String]) -> i32 {
+    let mut template = "native".to_string();
+    let mut name: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-h" | "--help" => {
+                eprint!("{INIT_USAGE}");
+                return 0;
+            }
+            "--template" => {
+                if i + 1 >= args.len() {
+                    eprintln!("error: --template requires a type (web|native|wasm)");
+                    return 2;
+                }
+                template = args[i + 1].clone();
+                i += 2;
+            }
+            other if other.starts_with('-') => {
+                eprintln!("error: unknown option `{other}`");
+                return 2;
+            }
+            other => {
+                if name.is_some() {
+                    eprintln!("error: multiple project names given");
+                    return 2;
+                }
+                name = Some(other.to_string());
+                i += 1;
+            }
+        }
+    }
+    let project_name = name.unwrap_or_else(|| "my-ngs-project".to_string());
+
+    let dir = PathBuf::from(&project_name);
+    if dir.exists() {
+        eprintln!("error: directory `{}` already exists", project_name);
+        return 1;
+    }
+
+    match template.as_str() {
+        "native" => init_native(&dir, &project_name),
+        "web" => init_web(&dir, &project_name),
+        "wasm" => init_wasm(&dir, &project_name),
+        other => {
+            eprintln!("error: unknown template `{other}` (use web, native, or wasm)");
+            2
+        }
+    }
+}
+
+fn init_native(dir: &Path, name: &str) -> i32 {
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("error: cannot create directory: {e}");
+        return 1;
+    }
+
+    // main.ngs
+    write_file(
+        &dir.join("main.ngs"),
+        &format!(
+            r#"// {name} — NagiScript native project
+
+fn main() {{
+    print("Hello from {name}!")
+}}
+"#
+        ),
+    );
+
+    // Cargo.toml (for building with ngs_driver)
+    write_file(
+        &dir.join("ngs-project.toml"),
+        &format!(
+            r#"[project]
+name = "{name}"
+version = "0.1.0"
+template = "native"
+
+[build]
+target = "native"
+"#
+        ),
+    );
+
+    // .gitignore
+    write_file(
+        &dir.join(".gitignore"),
+        "*.o\n*.ll\n*.exe\n/target\n",
+    );
+
+    println!("Created native project `{name}` in `{}/`", dir.display());
+    println!("  cd {name}");
+    println!("  nagiscript build main.ngs");
+    0
+}
+
+fn init_web(dir: &Path, name: &str) -> i32 {
+    if let Err(e) = std::fs::create_dir_all(dir.join("src")) {
+        eprintln!("error: cannot create directory: {e}");
+        return 1;
+    }
+
+    // src/main.ngs
+    write_file(
+        &dir.join("src/main.ngs"),
+        &format!(
+            r#"// {name} — NagiScript web frontend (WASM)
+
+export "C" fn greeting() -> string {{
+    return "Hello from {name}!"
+}}
+"#
+        ),
+    );
+
+    // package.json
+    write_file(
+        &dir.join("package.json"),
+        &format!(
+            r#"{{
+  "name": "{name}",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {{
+    "build:wasm": "nagiscript wasm src/main.ngs -o pkg/main.wasm",
+    "dev": "npm run build:wasm && vite",
+    "build": "npm run build:wasm && vite build"
+  }},
+  "devDependencies": {{
+    "vite": "^6.0.0"
+  }}
+}}
+"#
+        ),
+    );
+
+    // index.html
+    write_file(
+        &dir.join("index.html"),
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NagiScript Web App</title>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
+"#,
+    );
+
+    // src/main.ts
+    write_file(
+        &dir.join("src/main.ts"),
+        &format!(
+            r#"// TypeScript glue for {name} WASM module
+
+async function init() {{
+  const {{ greeting }} = await import("../pkg/main.js");
+  const app = document.getElementById("app")!;
+  app.textContent = greeting();
+}}
+
+init();
+"#
+        ),
+    );
+
+    // ngs-project.toml
+    write_file(
+        &dir.join("ngs-project.toml"),
+        &format!(
+            r#"[project]
+name = "{name}"
+version = "0.1.0"
+template = "web"
+
+[build]
+target = "wasm"
+"#
+        ),
+    );
+
+    // .gitignore
+    write_file(
+        &dir.join(".gitignore"),
+        "node_modules/\n/dist\n/pkg\n*.wasm\n*.wat\n",
+    );
+
+    println!("Created web project `{name}` in `{}/`", dir.display());
+    println!("  cd {name}");
+    println!("  npm install");
+    println!("  npm run dev");
+    0
+}
+
+fn init_wasm(dir: &Path, name: &str) -> i32 {
+    if let Err(e) = std::fs::create_dir_all(dir.join("src")) {
+        eprintln!("error: cannot create directory: {e}");
+        return 1;
+    }
+
+    // src/lib.ngs
+    write_file(
+        &dir.join("src/lib.ngs"),
+        &format!(
+            r#"// {name} — NagiScript WASM library
+
+export "C" fn add(a: i32, b: i32) -> i32 {{
+    return a + b
+}}
+
+export "C" fn greet(name: string) -> string {{
+    return "Hello, " + name + "!"
+}}
+"#
+        ),
+    );
+
+    // ngs-project.toml
+    write_file(
+        &dir.join("ngs-project.toml"),
+        &format!(
+            r#"[project]
+name = "{name}"
+version = "0.1.0"
+template = "wasm"
+
+[build]
+target = "wasm"
+"#
+        ),
+    );
+
+    // .gitignore
+    write_file(
+        &dir.join(".gitignore"),
+        "*.wasm\n*.wat\n*.d.ts\n/target\n",
+    );
+
+    println!("Created WASM library project `{name}` in `{}/`", dir.display());
+    println!("  cd {name}");
+    println!("  nagiscript wasm src/lib.ngs -o pkg/{name}.wasm");
+    println!("  nagiscript dts src/lib.ngs -o pkg/{name}.d.ts");
+    0
+}
+
+fn write_file(path: &Path, content: &str) {
+    if let Err(e) = std::fs::write(path, content) {
+        eprintln!("error: cannot write {}: {e}", path.display());
+    }
 }
 
 // ---------------------------------------------------------------------------

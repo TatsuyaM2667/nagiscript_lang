@@ -1,0 +1,7 @@
+// Reference counting demonstration
+
+fn main() {
+    val r = Rc.new(42)
+    val inner = r.get()
+    print(inner)
+}

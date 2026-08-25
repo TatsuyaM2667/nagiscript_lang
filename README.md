@@ -2,6 +2,7 @@
 
 LLVMベースで C/Rust/Zig/Odin と深く相互運用でき、Arduino言語並みに書きやすい文法を持つ汎用プログラミング言語です。Wasm経由でReact/TypeScriptとも連携できることを目指しています。
 
+> 詳細な設計思想・仕様は [nagiscript-language-design.md](./nagiscript-language-design.md) を参照してください。
 
 ## 特徴
 
@@ -11,6 +12,7 @@ LLVMベースで C/Rust/Zig/Odin と深く相互運用でき、Arduino言語並�
 - **Zig/Odin方式ジェネリクス**: トレイト制約なしのコンパイル時ダックタイピング（モノモーフィゼーション）で高速コンパイル
 - **RCベースメモリ管理**: 借用チェッカーなしの自動解放（参照カウント）
 - **`.ngsx` JSX構文**: UIコンポーネントをJSX風に書ける（`.ts` に対する `.tsx` と同じ位置付け）
+- **`val` / `var`**: イミュータブル変数は `val`、ミュータブル変数は `var`
 
 ## 実装状況
 
@@ -19,27 +21,88 @@ LLVMベースで C/Rust/Zig/Odin と深く相互運用でき、Arduino言語並�
 | `ngs_lexer` / `ngs_ast` / `ngs_parser` | ✅ 完成（`.ngs` / `.ngsx` 両対応） |
 | `ngs_sema`（型検査・モノモーフ化・網羅性検査） | ✅ 完成 |
 | `ngs_ir`（中間表現への lowering） | ✅ 完成 |
-| `ngs_codegen_llvm` | 未実装 |
-| `ngs_codegen_wasm` | 未実装 |
-| `ngs_std`（ランタイム） | 未実装 |
-| `nagiscript` CLI | 未実装 |
+| `ngs_codegen_llvm`（NGS-IR → LLVM IR） | ✅ 実装済み（ネイティブビルド対応） |
+| `ngs_codegen_wasm`（NGS-IR → Wasm/WAT + .d.ts） | ✅ 実装済み（Wasmビルド対応） |
+| `ngs_std`（C ランタイム: print, alloc, Rc 等） | ✅ 実装済み |
+| `nagiscript` CLI | ✅ 完成（check / ir / build / run / dts / wasm / init） |
 
-**現在、実行可能バイナリはまだありません。** フロントエンド（解析〜IR生成）をライブラリとして利用できます。
+**テスト**: 96件全てパス
 
-## ビルドとテスト
+## セットアップ
 
 ```bash
 # Rust 安定版ツールチェーンが必要です
-cargo build
-cargo test
+cargo build --release
 ```
 
-フロントエンドの動作デモ:
+### 必要ツール（ビルド時）
+
+| ツール | 用途 | 備考 |
+|---|---|---|
+| `rustc` + `cargo` | コンパイラ本体のビルド | |
+| `llc` | LLVM IR → オブジェクトコード | LLVM 18+ 推奨 |
+| `cc`（gcc/clang） | リンク | |
+| `wat2wasm`（任意） | Wasm ビルド時 | [WABT](https://github.com/WebAssembly/wabt) |
+| `wasmtime`（任意） | Wasm 実行時 | |
+
+環境変数でパスを上書きできます:
 
 ```bash
-cargo run -p ngs_parser --example smoke   # パース結果の表示
-cargo run -p ngs_sema --example smoke     # 型検査・モノモーフ化の結果を表示
-cargo test -p ngs_ir                      # lowering の統合テスト
+export NGS_LLC=/usr/bin/llc-18
+export NGS_CC=clang-18
+export NGS_WAT2WASM=/usr/local/bin/wat2wasm
+```
+
+## 使い方
+
+### CLI コマンド
+
+```bash
+# プロジェクトの初期化
+nagiscript init my-app               # ネイティブテンプレート
+nagiscript init --template web app   # Web (Wasm + HTML) テンプレート
+nagiscript init --template wasm w    # Wasm テンプレート
+
+# タイプチェック
+nagiscript check main.ngs
+
+# IR ダンプ
+nagiscript ir main.ngs
+
+# ネイティブビルド & 実行
+nagiscript build main.ngs -o app     # LLVM → .ll → .o → 実行バイナリ
+nagiscript run main.ngs              # 一時ファイルにビルドして実行
+
+# Wasm ビルド
+nagiscript wasm main.ngs -o out      # out.wat + out.wasm 生成
+
+# TypeScript 型定義
+nagiscript dts main.ngs -o out.d.ts  # エクスポート関数の型定義を生成
+```
+
+### ライブラリとして利用する
+
+```rust
+use ngs_ir::lower::lower;
+
+let src = r#"
+fn main() { print("hello") }
+"#;
+
+// 1. パース
+let file = ngs_parser::parse_source(src, "main.ngs")?;
+
+// 2. 型検査 & モノモーフィゼーション
+let typed = ngs_sema::check(&file)?;
+
+// 3. NGS-IR への lowering
+let ir = lower(&typed)?;
+
+// 4. LLVM IR 生成
+let llvm = ngs_codegen_llvm::generate(&ir, &Default::default())?;
+
+// 5. Wasm 生成
+let wat = ngs_codegen_wasm::generate_wat(&ir)?;
 ```
 
 ## 言語ツアー
@@ -53,7 +116,7 @@ fn add(a: i32, b: i32) -> i32 {
 }
 
 fn main() {
-    let x = 10          // イミュータブル（型推論）
+    val x = 10          // イミュータブル（型推論）
     var y = 20          // ミュータブル
     y = y + 1
     y += add(x, y)      // 複合代入
@@ -85,8 +148,8 @@ fn area(s: Shape) -> f32 {
 }
 
 fn main() {
-    let p = Point { x: 1.0, y: 2.0 }
-    let s = Shape.Circle(3.0)
+    val p = Point { x: 1.0, y: 2.0 }
+    val s = Shape.Circle(3.0)
     print(area(s))
 }
 ```
@@ -103,7 +166,7 @@ impl Point {
     }
 }
 
-let p = Point.new(1.0, 2.0)   // Type.method 形式で呼ぶ
+val p = Point.new(1.0, 2.0)   // Type.method 形式で呼ぶ
 print(p.norm2())
 ```
 
@@ -111,7 +174,7 @@ print(p.norm2())
 
 ```rust
 // if は式（値を返せる）
-let max = if a > b { a } else { b }
+val max = if a > b { a } else { b }
 
 var i = 0
 while i < 10 {
@@ -136,12 +199,12 @@ fn build() -> List<i32> {
 }
 
 fn main() {
-    let l = build()
+    val l = build()
     l.push(3)
     print(l.get(0))            // 境界チェック付きアクセス
     print(l.len())
 
-    let r = Rc.new(42)         // 参照カウントポインタ（スカラーを共有）
+    val r = Rc.new(42)         // 参照カウントポインタ（スカラーを共有）
     print(r.get())
 }
 ```
@@ -157,7 +220,7 @@ fn wrap(v: i32) -> Result<i32, string> {
 }
 
 fn use_res() -> i32 {
-    let r: Result<i32, string> = wrap(5)
+    val r: Result<i32, string> = wrap(5)
     return r?                  // Err なら関数から即return
 }
 ```
@@ -167,7 +230,7 @@ fn use_res() -> i32 {
 ```rust
 fn read_register(addr: u32) -> u32 {
     unsafe {
-        let ptr = addr as *u32
+        val ptr = addr as *u32
         return *ptr            // 生ポインタの参照外しは unsafe 内のみ
     }
 }
@@ -193,9 +256,9 @@ export "C" fn ngs_add(a: i32, b: i32) -> i32 {
 数値⇔数値、bool⇔整数、整数⇔ポインタ、ポインタ⇔ポインタが可能です。
 
 ```rust
-let f = 3 as f64           // int → float
-let n = big as i32         // 縮小変換
-let p = addr as *u32       // 整数 → 生ポインタ
+val f = 3 as f64           // int → float
+val n = big as i32         // 縮小変換
+val p = addr as *u32       // 整数 → 生ポインタ
 ```
 
 ### `.ngsx`: JSX風UI構文
@@ -214,49 +277,45 @@ fn Counter(props: Props) -> Element {
 }
 ```
 
-## ライブラリとして利用する
-
-各クレートは独立しています。フロントエンド → IR の一連の流れ:
-
-```rust
-use ngs_sema::check;
-
-let src = r#"
-fn main() { print("hello") }
-"#;
-
-// 1. パース（拡張子 .ngsx で JSX モード有効化）
-let file = ngs_parser::parse_source(src, "main.ngs")?;
-
-// 2. 型検査 & モノモーフィゼーション
-let typed: TypedProgram = check(&file)?;
-
-// 3. NGS-IR への lowering
-let ir: IrProgram = ngs_ir::lower(&typed)?;
-
-// 4. （デバッグ用）IR のテキストダンプ
-println!("{}", ngs_ir::dump::dump_program(&ir));
-```
-
 ## プロジェクト構成
 
 ```
 nagiscript_lang/
 ├── crates/
 │   ├── ngs_lexer/          # 字句解析（.ngs / .ngsx 両対応）
-│   ├── ngs_parser/         # 構文解析 → AST（JSX式を含む）
-│   ├── ngs_ast/            # AST定義
-│   ├── ngs_sema/           # 意味解析・型検査・モノモーフ化
-│   ├── ngs_ir/             # NGS-IR（自前の中間表現）+ lowering
-│   ├── ngs_codegen_llvm/   # NGS-IR → LLVM IR（inkwell）※WIP
-│   ├── ngs_codegen_wasm/   # Wasmターゲット + .d.ts 生成 ※WIP
-│   ├── ngs_driver/         # CLIエントリポイント ※WIP
-│   └── ngs_std/            # ランタイムライブラリ ※WIP
-├── examples/
+│   ├── ngs_parser/         # 構文解析 → AST
+│   ├── ngs_ast/            # AST / TokenKind 定義
+│   ├── ngs_sema/           # 型検査・モノモーフ化・網羅性検査
+│   ├── ngs_ir/             # NGS-IR（簡易SSA）+ lowering
+│   ├── ngs_codegen_llvm/   # NGS-IR → LLVM IR（inkwell）
+│   ├── ngs_codegen_wasm/   # NGS-IR → Wasm/WAT + TypeScript 型定義
+│   ├── ngs_driver/         # CLI（check / ir / build / run / dts / wasm / init）
+│   └── ngs_std/            # C ランタイム（print, alloc, Rc, List 等）
+├── examples/               # サンプル .ngスクリプト
+│   ├── hello.ngs           # Hello World
+│   ├── basics.ngs          # 基本文法デモ
+│   ├── generics.ngs        # ジェネリクスデモ
+│   ├── rc_demo.ngs         # Rc 参照カウントデモ
+│   ├── list_demo.ngs       # List コレクションデモ
+│   ├── unsafe_demo.ngs     # unsafe / 生ポインタデモ
 │   └── react-demo/         # Wasm×React サンプル（予定）
 ├── tests/
-│   ├── lexer/  parser/  codegen/
+│   ├── lexer/              # 字句解析テスト（17件）
+│   ├── parser/             # 構文解析テスト（25件）
+│   ├── ir/                 # IR lowering テスト（18件）
+│   └── driver/             # CLI 統合テスト（6件）
 └── nagiscript-language-design.md   # 設計仕様書
+```
+
+## テスト
+
+```bash
+cargo test --all            # 全96件
+cargo test -p ngs_lexer     # 字句解析のみ
+cargo test -p ngs_parser    # 構文解析のみ
+cargo test -p ngs_sema      # 型検査のみ
+cargo test -p ngs_ir        # IR lowering のみ
+cargo test -p ngs_driver    # CLI 統合テストのみ
 ```
 
 ## コンパイルパイプライン
@@ -267,7 +326,8 @@ nagiscript_lang/
      ↓ ngs_parser     AST
      ↓ ngs_sema       型検査・モノモーフ化 → TypedProgram
      ↓ ngs_ir         NGS-IR（簡易SSA、LLVM非依存）
-     ↓ ngs_codegen_*  LLVM IR / Wasm（未実装）
+     ↓ ngs_codegen_llvm   LLVM IR → .ll → .o → リンク → 実行バイナリ
+     ↓ ngs_codegen_wasm   WAT → .wasm + TypeScript 型定義
 ```
 
 ## ロードマップ
@@ -275,9 +335,13 @@ nagiscript_lang/
 - [x] Stage 1: レキサ・パーサ・AST基盤
 - [x] Sema（モノモーフ化ジェネリクス・safe/unsafe・網羅性）
 - [x] NGS-IR lowering
-- [ ] Stage 2: LLVM codegen（ネイティブ実行ファイル）
-- [ ] Stage 4: FFI境界の本実装（ngs_std ランタイム）
-- [ ] Stage 6: Wasmターゲット + React連携
+- [x] LLVM codegen（ネイティブビルド）
+- [x] Wasm codegen（.wasm + .d.ts 生成）
+- [x] ランタイム（ngs_std: print, Rc, List, alloc 等）
+- [x] CLI ドライバ（check / ir / build / run / dts / wasm / init）
+- [x] テスト（96件、全パス）
+- [ ] ネイティブビルドの統合テスト改善（llc / cc 依存テストのCI化）
+- [ ] Wasm×React デモアプリ
 - [ ] Stage 8: `.ngsx` UIコンポーネント、セルフホスト
 
 ## ライセンス

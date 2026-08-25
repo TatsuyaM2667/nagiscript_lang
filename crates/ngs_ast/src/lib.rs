@@ -35,9 +35,9 @@ pub enum TokenKind {
     FloatLit(f64),
     StrLit(String),
 
-    // keywords (spec 4: fn let var if else for while match struct enum unsafe extern export return)
+    // keywords (spec 4: fn val var if else for while match struct enum unsafe extern export return)
     KwFn,
-    KwLet,
+    KwLet, // internally "let" but source keyword is "val"
     KwVar,
     KwIf,
     KwElse,
