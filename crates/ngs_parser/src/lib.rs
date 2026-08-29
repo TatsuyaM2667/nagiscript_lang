@@ -614,7 +614,8 @@ impl Parser {
                 let span = t.span.merge(e.span);
                 Ok(Expr { kind: ExprKind::Unary(UnOp::Not, Box::new(e)), span })
             }
-            TokenKind::AndAnd => {
+            // 単一 & はアドレス取得演算子 (&& は論理AND/ラムダ)
+            TokenKind::Amp => {
                 let t = self.bump();
                 let e = self.parse_unary()?;
                 let span = t.span.merge(e.span);
@@ -687,6 +688,27 @@ impl Parser {
         Ok(e)
     }
 
+    /// f-string の `{expr}` 部分（独立したソース断片）を式として再パースする。
+    fn parse_expr_from_src(&self, src: &str, span: Span) -> Result<Expr, ParseError> {
+        let toks = ngs_lexer::lex(src).map_err(|e| ParseError { msg: e.msg, span })?;
+        let mut p = Parser {
+            src: src.to_string(),
+            toks,
+            pos: 0,
+            jsx: self.jsx,
+            no_struct_depth: 0,
+            paren_depth: 0,
+        };
+        let e = p.parse_expr()?;
+        if !p.at_eof() {
+            return Err(ParseError {
+                msg: "unexpected token in string interpolation".into(),
+                span,
+            });
+        }
+        Ok(e)
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         let t = self.peek();
         match t.kind {
@@ -709,6 +731,21 @@ impl Parser {
             TokenKind::StrLit(s) => {
                 self.bump();
                 Ok(Expr { kind: ExprKind::Str(s), span: t.span })
+            }
+            TokenKind::FStr(segs) => {
+                self.bump();
+                let mut parts = Vec::with_capacity(segs.len());
+                for seg in segs {
+                    match seg {
+                        ngs_ast::FStrSeg::Text(s) => parts.push(ngs_ast::FStringPart::Text(s)),
+                        ngs_ast::FStrSeg::Expr(sp) => {
+                            let src = self.src.get(sp.lo..sp.hi).unwrap_or_default().to_string();
+                            let e = self.parse_expr_from_src(&src, sp)?;
+                            parts.push(ngs_ast::FStringPart::Expr(Box::new(e)));
+                        }
+                    }
+                }
+                Ok(Expr { kind: ExprKind::FStr(parts), span: t.span })
             }
             TokenKind::LParen => {
                 const MAX_PAREN_DEPTH: u32 = 64;

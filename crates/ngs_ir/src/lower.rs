@@ -23,7 +23,7 @@ use std::rc::Rc;
 
 use crate::*;
 use ngs_ast::{BinOp, UnOp};
-use ngs_sema::{Callee, Intrinsic, MonoFn, TArm, TBlock, TExpr, TExprKind, TPattern, TStmt, Ty, TypedProgram};
+use ngs_sema::{Callee, Intrinsic, MonoFn, TArm, TBlock, TExpr, TExprKind, TFStringPart, TPattern, TStmt, Ty, TypedProgram};
 
 // ---------------------------------------------------------------------------
 // 型変換
@@ -1261,6 +1261,50 @@ impl<'a> Lowerer<'a> {
                     ctx.b.call(&name("i64"), vec![i], IrType::Void);
                 } else {
                     return Err(format!("print cannot display `{}`", value_ty.display()));
+                }
+                Ok(NO_V)
+            }
+            Intrinsic::PrintFStr { newline, parts } => {
+                for part in &parts {
+                    match part {
+                        TFStringPart::Text(s) => {
+                            let v = ctx.b.str_lit(s);
+                            let dp = ctx.b.addr_off(v, 0);
+                            let lp = ctx.b.addr_off(v, 8);
+                            let d = ctx.b.load(dp, IrType::Ptr(Rc::new(IrType::U8)));
+                            let l = ctx.b.load(lp, IrType::Usize);
+                            ctx.b.call("__ngs_print_str", vec![d, l], IrType::Void);
+                        }
+                        TFStringPart::Expr(te) => {
+                            let v = self.expr(ctx, te)?;
+                            let vt = self.conv(&te.ty)?;
+                            if matches!(vt, IrType::Str) {
+                                let dp = ctx.b.addr_off(v, 0);
+                                let lp = ctx.b.addr_off(v, 8);
+                                let d = ctx.b.load(dp, IrType::Ptr(Rc::new(IrType::U8)));
+                                let l = ctx.b.load(lp, IrType::Usize);
+                                ctx.b.call("__ngs_print_str", vec![d, l], IrType::Void);
+                            } else if te.ty == Ty::Bool {
+                                ctx.b.call("__ngs_print_bool", vec![v], IrType::Void);
+                            } else if vt.is_float() {
+                                let f = self.cast_value_simple(ctx, vt, v, IrType::F64)?;
+                                ctx.b.call("__ngs_print_f64", vec![f], IrType::Void);
+                            } else if vt.is_int() {
+                                let i = self.cast_value_simple(ctx, vt, v, IrType::I64)?;
+                                ctx.b.call("__ngs_print_i64", vec![i], IrType::Void);
+                            } else {
+                                return Err(format!("cannot interpolate `{}`", te.ty.display()));
+                            }
+                        }
+                    }
+                }
+                if newline {
+                    let v = ctx.b.str_lit("\n");
+                    let dp = ctx.b.addr_off(v, 0);
+                    let lp = ctx.b.addr_off(v, 8);
+                    let d = ctx.b.load(dp, IrType::Ptr(Rc::new(IrType::U8)));
+                    let l = ctx.b.load(lp, IrType::Usize);
+                    ctx.b.call("__ngs_print_str", vec![d, l], IrType::Void);
                 }
                 Ok(NO_V)
             }

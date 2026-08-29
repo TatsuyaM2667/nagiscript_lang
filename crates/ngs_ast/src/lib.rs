@@ -28,12 +28,23 @@ impl Span {
 // Tokens
 // ---------------------------------------------------------------------------
 
+/// f-string のセグメント。`f"a{x}b"` は Text("a") / Expr(span) / Text("b")。
+/// Expr の span は `{...}` の中身（波括弧を除いたソース範囲）を指し、
+/// parser がその範囲を再パースして式へ変換する。
+#[derive(Debug, Clone, PartialEq)]
+pub enum FStrSeg {
+    Text(String),
+    Expr(Span),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     Ident(String),
     IntLit(u64),
     FloatLit(f64),
     StrLit(String),
+    /// `f"..."` 文字列補間（print/println 内で print-time 展開される）
+    FStr(Vec<FStrSeg>),
 
     // keywords (spec 4: fn val var if else for while match struct enum unsafe extern export return)
     KwFn,
@@ -73,6 +84,7 @@ pub enum TokenKind {
     Gt,
     Ge,
     AndAnd,
+    Amp,
     OrOr,
     Assign,
     PlusAssign,
@@ -314,6 +326,8 @@ pub enum ExprKind {
     Float(f64),
     Bool(bool),
     Str(String),
+    /// `f"..."` 文字列補間。セグメントは Text または埋め込み式。
+    FStr(Vec<FStringPart>),
     /// 識別子または a.b.c 形式のパス。semaが変数/フィールド/関連関数/
     /// enumバリアントに解決する。
     Path(Vec<String>),
@@ -355,6 +369,14 @@ pub enum ExprKind {
     /// JSX属性集合。parser が `<div class="x">{e}</div>` を
     /// createElement("div", JsxProps([...]), ...) 呼び出しへ糖衣展開した結果の一部。
     JsxProps(Vec<(String, Expr)>),
+}
+
+#[derive(Debug, Clone)]
+pub enum FStringPart {
+    Text(String),
+    /// 補間式（`{expr}` の中身）。parser が FStr トークンの Expr セグメントを
+    /// 再パースした結果。
+    Expr(Box<Expr>),
 }
 
 #[derive(Debug, Clone)]

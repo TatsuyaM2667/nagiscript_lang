@@ -124,6 +124,10 @@ impl<'a> Lexer<'a> {
                 }
             }
             let text = &self.src[start..self.pos];
+            // f"..." 補間文字列: 識別子 `f` の直後に `"` が続く場合のみ
+            if text == b"f" && self.src.get(self.pos) == Some(&b'"') {
+                return self.lex_fstring(start);
+            }
             let kind = keyword_or_ident(text);
             return Ok(self.make(kind, start));
         }
@@ -158,7 +162,7 @@ impl<'a> Lexer<'a> {
         if two(b'!', b'=') { two_tok!(TokenKind::NotEq); }
         if two(b'<', b'=') { two_tok!(TokenKind::Le); }
         if two(b'>', b'=') { two_tok!(TokenKind::Ge); }
-        if two(b'&', b'&') { two_tok!(TokenKind::AndAnd); }
+        if two(b'&', b'&') { two_tok!(TokenKind::AndAnd); } // 論理AND &&
         if two(b'|', b'|') { two_tok!(TokenKind::OrOr); }
         if two(b'-', b'>') { two_tok!(TokenKind::Arrow); }
         if two(b'=', b'>') { two_tok!(TokenKind::FatArrow); }
@@ -191,6 +195,7 @@ impl<'a> Lexer<'a> {
             b'.' => one_tok!(TokenKind::Dot),
             b'?' => one_tok!(TokenKind::Question),
             b'@' => one_tok!(TokenKind::At),
+            b'&' => one_tok!(TokenKind::Amp), // アドレス取得 & (単一)
             b'|' => one_tok!(TokenKind::Pipe),
             other => {
                 self.bump();
@@ -369,6 +374,159 @@ impl<'a> Lexer<'a> {
             }
         }
         Ok(self.make(TokenKind::StrLit(out), start))
+    }
+
+    /// `f"..."` 文字列補間。`f"` が消費済み（self.pos は `"` の直後）の状態で呼ばれる。
+    /// `{expr}` を式セグメント（ソース範囲）に、それ以外をテキストセグメントに分解する。
+    /// `\{` / `\}` はリテラルな `{` / `}` としてテキストに含まれる（補間されない）。
+    fn lex_fstring(&mut self, start: usize) -> Result<Token, LexError> {
+        self.bump(); // opening "
+        let mut segs: Vec<ngs_ast::FStrSeg> = Vec::new();
+        let mut cur_text = String::new();
+        let mut expr_start: Option<usize> = None; // { の直後位置
+        let mut depth: u32 = 0;
+
+        let flush_text = |text: &mut String, segs: &mut Vec<ngs_ast::FStrSeg>| {
+            if !text.is_empty() {
+                segs.push(ngs_ast::FStrSeg::Text(std::mem::take(text)));
+            }
+        };
+
+        loop {
+            let c = match self.peek() {
+                None => {
+                    return Err(LexError {
+                        msg: "unterminated string literal".into(),
+                        span: Span::new(start, self.pos),
+                    })
+                }
+                Some(c) => c,
+            };
+            match c {
+                b'"' => {
+                    if expr_start.is_some() {
+                        return Err(LexError {
+                            msg: "expected `}` in string interpolation".into(),
+                            span: Span::new(start, self.pos),
+                        });
+                    }
+                    self.bump();
+                    flush_text(&mut cur_text, &mut segs);
+                    return Ok(self.make(TokenKind::FStr(segs), start));
+                }
+                b'\n' => {
+                    return Err(LexError {
+                        msg: "newline in string literal".into(),
+                        span: Span::new(start, self.pos),
+                    })
+                }
+                b'\\' => {
+                    if expr_start.is_some() {
+                        return Err(LexError {
+                            msg: "escape inside interpolation is not allowed".into(),
+                            span: Span::new(start, self.pos),
+                        });
+                    }
+                    let e = self.bump(); // backslash
+                    let _ = e;
+                    match self.bump() {
+                        Some(b'n') => cur_text.push('\n'),
+                        Some(b't') => cur_text.push('\t'),
+                        Some(b'r') => cur_text.push('\r'),
+                        Some(b'0') => cur_text.push('\0'),
+                        Some(b'"') => cur_text.push('"'),
+                        Some(b'\\') => cur_text.push('\\'),
+                        Some(b'{') => cur_text.push('{'),
+                        Some(b'}') => cur_text.push('}'),
+                        Some(other) => {
+                            return Err(LexError {
+                                msg: format!("unknown escape sequence `\\{}`", other as char),
+                                span: Span::new(self.pos - 2, self.pos),
+                            })
+                        }
+                        None => {
+                            return Err(LexError {
+                                msg: "unterminated escape".into(),
+                                span: Span::new(start, self.pos),
+                            })
+                        }
+                    }
+                }
+                b'{' => match expr_start {
+                    None => {
+                        flush_text(&mut cur_text, &mut segs);
+                        expr_start = Some(self.pos + 1);
+                        depth = 0;
+                        self.bump();
+                    }
+                    Some(_) => {
+                        depth += 1;
+                        self.consume_utf8();
+                    }
+                },
+                b'}' => match expr_start {
+                    Some(_) if depth == 0 => {
+                        // 式の終端: expr_start..(pos) が式本体
+                        let hi = self.pos;
+                        let seg = ngs_ast::FStrSeg::Expr(Span::new(expr_start.unwrap(), hi));
+                        segs.push(seg);
+                        expr_start = None;
+                        self.bump();
+                    }
+                    Some(_) => {
+                        depth -= 1;
+                        self.consume_utf8();
+                    }
+                    None => {
+                        cur_text.push('}');
+                        self.bump();
+                    }
+                },
+                _ => {
+                    if let Some(es) = expr_start {
+                        // 式内部: 文字列リテラル内の `{`/`}` は数えない（簡易）
+                        let _ = es;
+                        self.consume_utf8();
+                    } else {
+                        self.consume_utf8_text(&mut cur_text);
+                    }
+                }
+            }
+        }
+    }
+
+    /// 式セグメント内の1文字（UTF-8 マルチバイトをまとめて）を消費する。
+    fn consume_utf8(&mut self) {
+        let c = self.bump();
+        if let Some(c) = c {
+            if c >= 0x80 {
+                let len = utf8_len(c);
+                for _ in 1..len {
+                    self.bump();
+                }
+            }
+        }
+    }
+
+    /// テキストセグメントに1文字（UTF-8 マルチバイトをまとめて）を追加し消費する。
+    fn consume_utf8_text(&mut self, out: &mut String) {
+        let c = self.bump();
+        if let Some(c) = c {
+            if c < 0x80 {
+                out.push(c as char);
+            } else {
+                let len = utf8_len(c);
+                let mut bytes = vec![c];
+                for _ in 1..len {
+                    if let Some(b) = self.bump() {
+                        bytes.push(b);
+                    }
+                }
+                if let Ok(s) = std::str::from_utf8(&bytes) {
+                    out.push_str(s);
+                }
+            }
+        }
     }
 }
 

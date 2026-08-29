@@ -205,3 +205,61 @@ fn lex_negative_numbers() {
     assert_eq!(toks[0].kind, TokenKind::Minus);
     assert_eq!(toks[1].kind, TokenKind::IntLit(42));
 }
+
+#[test]
+fn lex_fstring_segments() {
+    use ngs_ast::FStrSeg;
+    let toks = lex(r#"f"a {x} b""#).unwrap();
+    match &toks[0].kind {
+        TokenKind::FStr(segs) => {
+            assert_eq!(segs.len(), 3);
+            assert!(matches!(&segs[0], FStrSeg::Text(t) if t == "a "));
+            assert!(matches!(&segs[1], FStrSeg::Expr(_)));
+            assert!(matches!(&segs[2], FStrSeg::Text(t) if t == " b"));
+        }
+        other => panic!("expected FStr token, got {other:?}"),
+    }
+}
+
+#[test]
+fn lex_fstring_plain_is_single_text() {
+    use ngs_ast::FStrSeg;
+    let toks = lex(r#"f"hello""#).unwrap();
+    match &toks[0].kind {
+        TokenKind::FStr(segs) => {
+            assert_eq!(segs.len(), 1);
+            assert!(matches!(&segs[0], FStrSeg::Text(t) if t == "hello"));
+        }
+        other => panic!("expected FStr token, got {other:?}"),
+    }
+}
+
+#[test]
+fn lex_fstring_nested_braces() {
+    use ngs_ast::FStrSeg;
+    let toks = lex(r#"f"{ {a: 1} } end""#).unwrap();
+    match &toks[0].kind {
+        TokenKind::FStr(segs) => {
+            // 先頭の空テキストはflushされないため Expr("{a: 1} の内側") + Text(" end")
+            assert_eq!(segs.len(), 2);
+            assert!(matches!(&segs[0], FStrSeg::Expr(_)));
+            assert!(matches!(&segs[1], FStrSeg::Text(t) if t == " end"));
+        }
+        other => panic!("expected FStr token, got {other:?}"),
+    }
+}
+
+#[test]
+fn lex_fstring_escaped_braces() {
+    use ngs_ast::FStrSeg;
+    // \{ and \} produce literal braces, not interpolation
+    let toks = lex(r#"f"a \{b\} {1}""#).unwrap();
+    match &toks[0].kind {
+        TokenKind::FStr(segs) => {
+            assert!(matches!(&segs[0], FStrSeg::Text(t) if t == "a {b} "));
+            assert!(matches!(&segs[1], FStrSeg::Expr(_)));
+        }
+        other => panic!("expected FStr token, got {other:?}"),
+    }
+}
+

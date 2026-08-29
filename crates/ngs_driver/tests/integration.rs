@@ -95,3 +95,37 @@ fn usage_errors() {
     assert_eq!(run(&["bogus"]).0, 2);
     assert_eq!(run(&["check"]).0, 2);
 }
+
+#[test]
+fn fstring_interpolation_prints_segments() {
+    let p = write_tmp(
+        "fstr.ngs",
+        r#"
+fn main() {
+    var x = 42;
+    var pi = 3.5;
+    var name = "world";
+    println(f"hello {name}, x={x}, pi={pi}, ok={true}");
+    println(f"{x} + 8 = {x + 8}");
+    println(f"esc \{x\} = {1}");
+}
+"#,
+    );
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(
+        so,
+        "hello world, x=42, pi=3.5, ok=true\n42 + 8 = 50\nesc {x} = 1\n"
+    );
+}
+
+#[test]
+fn fstring_outside_print_is_rejected() {
+    let p = write_tmp(
+        "fstr_bad.ngs",
+        "fn main() { val s = f\"bad {1}\"; }\n",
+    );
+    let (code, _so, se) = run(&["check", p.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(se.contains("only valid directly inside print/println"), "stderr={se}");
+}

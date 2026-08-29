@@ -68,6 +68,16 @@ impl Ty {
     pub fn is_aggregate(&self) -> bool {
         matches!(self, Ty::Array(..) | Ty::Struct(..))
     }
+    /// 整数型のビット幅（それ以外は None）。縮小変換判定に使う。
+    pub fn int_bits(&self) -> Option<u32> {
+        match self {
+            Ty::I8 | Ty::U8 => Some(8),
+            Ty::I16 | Ty::U16 => Some(16),
+            Ty::I32 | Ty::U32 => Some(32),
+            Ty::I64 | Ty::U64 | Ty::Usize | Ty::Isize => Some(64),
+            _ => None,
+        }
+    }
     /// 型名（エラー表示・マングリング用）
     pub fn display(&self) -> String {
         match self {
@@ -237,6 +247,9 @@ pub enum Callee {
 #[derive(Debug, Clone)]
 pub enum Intrinsic {
     Print { newline: bool, value_ty: Ty },
+    /// f-string を print/println で print-time 展開する。
+    /// parts の Text はそのまま出力、Expr は型に応じた print 呼び出しへ。
+    PrintFStr { newline: bool, parts: Vec<TFStringPart> },
     Len,
     Panic,
     Abort,
@@ -294,6 +307,13 @@ pub enum TPattern {
     Bool(bool),
     Str(String),
     Variant { mangled: String, variant: usize, bindings: Vec<(String, Ty)> },
+}
+
+/// f-string の型検査済みセグメント（print-time 展開用）
+#[derive(Debug, Clone)]
+pub enum TFStringPart {
+    Text(String),
+    Expr(TExpr),
 }
 
 // ---------------------------------------------------------------------------
@@ -837,6 +857,15 @@ impl Checker {
             (Some(e), None) => Some(Box::new(self.check_expr(e)?)),
             (None, _) => None,
         };
+        // void 型の tail 式は値として使われないため、副作用文として扱う。
+        // （例: `{ print(i) }` の print(i) は tail ではなく文になるべき）
+        let tail = match tail {
+            Some(t) if t.ty == Ty::Void => {
+                stmts.push(TStmt::Expr(*t));
+                None
+            }
+            other => other,
+        };
         self.pop_scopes_to(scope_depth - 1);
         Ok(TBlock { stmts, tail })
     }
@@ -872,7 +901,14 @@ impl Checker {
                     }
                 }
                 let vexpr = self.check_expr_expected(value, Some(&texpr.ty))?;
-                if !is_lvalue(target) {
+                // 代入先は解決済みの LHS（ローカル / フィールド / インデックス / デリファレンス）のみ可
+                if !matches!(
+                    texpr.kind,
+                    TExprKind::Local(_)
+                        | TExprKind::Field { .. }
+                        | TExprKind::Index { .. }
+                        | TExprKind::Deref(_)
+                ) {
                     self.err("invalid assignment target".into(), *span);
                 }
                 if texpr.ty.is_aggregate() && op.is_none() {
@@ -1009,7 +1045,23 @@ impl Checker {
         self.expr_depth += 1;
         let r = self.check_expr_expected_inner(e, expected);
         self.expr_depth -= 1;
-        r
+        let r = r?;
+        // A4: 整数の縮小変換（i64→i32 等、ビットが失われる）は暗黙不可とし、`as` を要求する。
+        if let Some(exp) = expected {
+            if let (Some(ebits), Some(hbits)) = (exp.int_bits(), r.ty.int_bits()) {
+                if ebits < hbits {
+                    return Err(SemaError {
+                        msg: format!(
+                            "narrowing conversion requires `as`: from `{}` to `{}`",
+                            r.ty.display(),
+                            exp.display()
+                        ),
+                        span: e.span,
+                    });
+                }
+            }
+        }
+        Ok(r)
     }
 
     fn check_expr_expected_inner(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<TExpr, SemaError> {
@@ -1057,6 +1109,10 @@ impl Checker {
                 }
                 Ok(mk(Str(s.clone()), Ty::Str, e.span))
             }
+            ExprKind::FStr(_) => Err(SemaError {
+                msg: "f-string is only valid directly inside print/println".into(),
+                span: e.span,
+            }),
             ExprKind::Path(path) => self.check_path(path, e.span, expected),
             ExprKind::Unary(op, inner) => {
                 // &x と *p は特別扱い
@@ -1635,6 +1691,30 @@ impl Checker {
                     let newline = path[0] == "println";
                     if args.len() != 1 {
                         return Err(SemaError { msg: "print takes exactly 1 argument".into(), span });
+                    }
+                    // f-string は print/println 限定で print-time 展開
+                    if let ExprKind::FStr(parts) = &args[0].kind {
+                        let mut tparts = Vec::with_capacity(parts.len());
+                        for part in parts {
+                            match part {
+                                FStringPart::Text(s) => tparts.push(TFStringPart::Text(s.clone())),
+                                FStringPart::Expr(e) => {
+                                    let te = self.check_expr(e)?;
+                                    if !(te.ty.is_numeric() || te.ty == Ty::Bool || te.ty == Ty::Str) {
+                                        return Err(SemaError {
+                                            msg: format!("cannot interpolate `{}`", te.ty.display()),
+                                            span,
+                                        });
+                                    }
+                                    tparts.push(TFStringPart::Expr(te));
+                                }
+                            }
+                        }
+                        return Ok(mk(
+                            Call(Callee::Intrinsic(Intrinsic::PrintFStr { newline, parts: tparts }), vec![]),
+                            Ty::Void,
+                            span,
+                        ));
                     }
                     let a = self.check_expr(&args[0])?;
                     let vt = a.ty.clone();
@@ -2526,15 +2606,6 @@ fn s_span(s: &Stmt) -> Span {
     match s {
         Stmt::Break(sp) | Stmt::Continue(sp) => *sp,
         _ => Span::new(0, 0),
-    }
-}
-
-fn is_lvalue(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::Path(p) => p.len() == 1,
-        ExprKind::FieldAccess { .. } | ExprKind::Index { .. } => true,
-        ExprKind::Unary(UnOp::Deref, _) => true,
-        _ => false,
     }
 }
 
