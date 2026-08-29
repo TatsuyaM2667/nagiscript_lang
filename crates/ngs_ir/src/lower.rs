@@ -139,10 +139,12 @@ impl FnCtx {
 struct Lowerer<'a> {
     prog: &'a TypedProgram,
     out: IrProgram,
+    /// 現在 lowering 中の関数の戻り型（return 文の値変換に使用）
+    cur_ret: IrType,
 }
 
 pub fn lower(prog: &TypedProgram) -> Result<IrProgram, String> {
-    let mut lp = Lowerer { prog, out: IrProgram::default() };
+    let mut lp = Lowerer { prog, out: IrProgram::default(), cur_ret: IrType::Void };
     for ms in &prog.structs {
         lp.out.structs.push(IrStruct {
             mangled: ms.mangled.clone(),
@@ -245,6 +247,7 @@ impl<'a> Lowerer<'a> {
         let params_ir: Vec<(String, IrType)> =
             mf.params.iter().map(|(n, t)| Ok((n.clone(), self.conv(t)?))).collect::<Result<_, String>>()?;
         let ret = self.conv(&mf.ret)?;
+        self.cur_ret = ret.clone();
 
         if mf.body.is_none() || mf.extern_abi.is_some() {
             self.out.funcs.push(IrFunction {
@@ -409,6 +412,8 @@ impl<'a> Lowerer<'a> {
             TStmt::Return(v) => match v {
                 Some(e) => {
                     let val = self.expr(ctx, e)?;
+                    let to = self.cur_ret.clone();
+                    let val = self.cast_value(ctx, e, val, to)?;
                     ctx.b.ret(Some(val));
                 }
                 None => ctx.b.ret(None),
@@ -565,10 +570,15 @@ impl<'a> Lowerer<'a> {
 
     fn expr_inner(&mut self, ctx: &mut FnCtx, e: &TExpr, ty: &IrType) -> Result<V, String> {
         match &e.kind {
-            TExprKind::Int(vv) => Ok(match ty {
-                IrType::F32 | IrType::F64 => ctx.b.const_float(*vv as f64),
-                _ => ctx.b.const_int(*vv),
-            }),
+            TExprKind::Int(vv) => match ty {
+                IrType::F32 | IrType::F64 => Ok(ctx.b.const_float(*vv as f64)),
+                t if t.is_int() && t.bits() != 64 => {
+                    // const_int は常に i64 で生成されるため、式の型幅へ合わせる
+                    let iv = ctx.b.const_int(*vv);
+                    self.cast_value_simple(ctx, IrType::I64, iv, t.clone())
+                }
+                _ => Ok(ctx.b.const_int(*vv)),
+            },
             TExprKind::Float(f) => Ok(ctx.b.const_float(*f)),
             TExprKind::Bool(b) => Ok(ctx.b.const_bool(*b)),
             TExprKind::Null => Ok(ctx.b.const_null()),
