@@ -27,7 +27,7 @@ NagiScript コンパイラーの内部構造を解説します。
 ┌─────────────────▼───────────────────────────────────┐
 │               Semantic Analysis                      │
 │               (ngs_sema)                             │
-│  Type checking, name resolution, borrow checking     │
+│  Type checking, name resolution                     │
 └─────────────────┬───────────────────────────────────┘
                   │
 ┌─────────────────▼───────────────────────────────────┐
@@ -69,7 +69,7 @@ enum Token {
     Return, Break, Continue, Import, Export, Async, Await,
     
     // リテラル
-    IntLit(f64), FloatLit(f64), StrLit(String), BoolLit(bool),
+    IntLit(i64), FloatLit(f64), StrLit(String), BoolLit(bool),
     
     // 識別子
     Ident(String),
@@ -134,8 +134,7 @@ enum Stmt {
 
 1. 型チェック
 2. 名前解決
-3. 借用チェック
-4. エラー検出
+3. エラー検出
 
 ### 型チェック
 
@@ -159,16 +158,11 @@ fn check_expr(expr: &Expr, env: &mut Env) -> Result<Type, Error> {
 }
 ```
 
-### 借用チェック
+### メモリ管理（RC方式・借用チェッカーなし）
 
-```rust
-fn check_borrow(expr: &Expr, env: &mut Env) -> Result<(), Error> {
-    // 不変借用のチェック
-    // 可変借用のチェック
-    // 参照の寿命のチェック
-    // ...
-}
-```
+> **v0.2 の核心方針に基づき、NagiScript は借用チェッカー（ライフタイムチェック）を持たない。**
+> メモリ管理は参照カウント（RC / `Rc<T>`）と所有権の単純化モデルで行い、循環参照や寿命の複雑さは型レベルで避ける。
+> 以前の設計草案に存在した `check_borrow` / `BorrowError` は実装されておらず、将来実装予定もない。
 
 ---
 
@@ -272,7 +266,6 @@ enum Error {
     ParseError { line: usize, col: usize, msg: String },
     TypeError { line: usize, col: usize, msg: String },
     NameError { line: usize, col: usize, msg: String },
-    BorrowError { line: usize, col: usize, msg: String },
     CodegenError { msg: String },
 }
 ```

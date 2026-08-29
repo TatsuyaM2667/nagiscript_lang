@@ -69,6 +69,8 @@ pub enum TokenKind {
     KwContinue,
     KwTrue,
     KwFalse,
+    /// `null` — unsafe ブロック内の生ポインタ型限定のヌルポインタ値
+    KwNull,
 
     // operators / punctuation
     Plus,
@@ -325,6 +327,7 @@ pub enum ExprKind {
     Int(u64),
     Float(f64),
     Bool(bool),
+    Null,
     Str(String),
     /// `f"..."` 文字列補間。セグメントは Text または埋め込み式。
     FStr(Vec<FStringPart>),

@@ -339,6 +339,9 @@ impl FnBuilder {
     pub fn const_bool(&mut self, v: bool) -> V {
         self.newv(Inst::Const { dst: 0, val: Const::Bool(v) })
     }
+    pub fn const_null(&mut self) -> V {
+        self.newv(Inst::Const { dst: 0, val: Const::NullPtr })
+    }
     pub fn str_lit(&mut self, s: &str) -> V {
         let id = self.strings_base + self.strings.len() as u32;
         self.strings.push(s.to_string());

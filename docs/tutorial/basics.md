@@ -170,7 +170,8 @@ val result = {
 
 ```ngs
 val a: i64 = 100
-val b: i32 = a  // OK: i64 から i32 へ安全な縮小
+val b: i32 = a        // エラー: 縮小変換は暗黙不可、`as` が必要
+val b2: i32 = a as i32 // OK: 明示的キャスト
 ```
 
 ### 型注釈による変換

@@ -728,6 +728,10 @@ impl Parser {
                 self.bump();
                 Ok(Expr { kind: ExprKind::Bool(false), span: t.span })
             }
+            TokenKind::KwNull => {
+                self.bump();
+                Ok(Expr { kind: ExprKind::Null, span: t.span })
+            }
             TokenKind::StrLit(s) => {
                 self.bump();
                 Ok(Expr { kind: ExprKind::Str(s), span: t.span })

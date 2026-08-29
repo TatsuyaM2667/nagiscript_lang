@@ -129,3 +129,30 @@ fn fstring_outside_print_is_rejected() {
     assert_eq!(code, 1);
     assert!(se.contains("only valid directly inside print/println"), "stderr={se}");
 }
+
+#[test]
+fn null_is_allowed_in_unsafe_only() {
+    // unsafe 内では null が生ポインタ値として使える
+    let p = write_tmp(
+        "null_ok.ngs",
+        r#"
+fn main() {
+    unsafe {
+        val p: *u8 = null
+        if (p == null) {
+            println("is null")
+        }
+    }
+}
+"#,
+    );
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "is null\n");
+
+    // unsafe 外ではエラー
+    let p2 = write_tmp("null_bad.ngs", "fn main() { val p: *u8 = null; }\n");
+    let (code2, _so2, se2) = run(&["check", p2.to_str().unwrap()]);
+    assert_eq!(code2, 1);
+    assert!(se2.contains("only allowed inside an `unsafe` block"), "stderr={se2}");
+}

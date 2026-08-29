@@ -573,6 +573,7 @@ fn keyword_or_ident(text: &[u8]) -> TokenKind {
         b"continue" => KwContinue,
         b"true" => KwTrue,
         b"false" => KwFalse,
+        b"null" => KwNull,
         _ => Ident(String::from_utf8_lossy(text).into_owned()),
     }
 }

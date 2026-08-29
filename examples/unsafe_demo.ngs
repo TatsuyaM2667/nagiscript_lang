@@ -14,7 +14,7 @@ fn write_to_ptr(ptr: *i32, v: i32) {
 
 fn main() {
     var x = 42
-    val ptr = &&x as *i32
+    val ptr = &x as *i32
     print(read_from_ptr(ptr))
     write_to_ptr(ptr, 100)
     print(x)

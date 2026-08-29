@@ -152,7 +152,7 @@ async fn fetch_data(url: str) Result<str, str> {
     }
 }
 
-fn main() async void {
+async fn main() void {
     val data = await fetch_data("https://api.example.com/data")
 }
 ```

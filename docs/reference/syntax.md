@@ -34,10 +34,13 @@ fn main() void {
 
 ### 不変変数
 
+`val` は**バインディングの再代入だけを禁止**します。束縛した値の「中身」はメソッド等で変更できます（例: List への push/add）。
+
 ```ngs
 val x: i32 = 42
 val name = "NagiScript"  // 型推論
-```
+// x = 43  // エラー: val への再代入は不可
+
 
 ### 可変変数
 
@@ -143,6 +146,26 @@ fn Point.distance_to(self: Point, other: Point) f64 {
 }
 ```
 
+### メソッドと self の受け渡し
+
+現行実装ではメソッドは `impl 型名 { fn メソッド名(self: 型名, ...) ... }` で定義します:
+
+```ngs
+impl Point {
+    fn distance_to(self: Point, other: Point) f64 {
+        return math.sqrt(dx * dx + dy * dy)
+    }
+    fn move_by(self: Point, dx: f64, dy: f64) {
+        self.x = self.x + dx   // self のフィールドは「参照」経由で変更できる
+        self.y = self.y + dy
+    }
+}
+```
+
+> **`self` は暗黙的に参照として渡されます**（値コピーではない）。
+> そのためメソッド内で `self.field = ...` のようにフィールドを変更すると、呼び出し元のインスタンスに反映されます。
+> `val` で束縛した場合もバインディング再代入こそ不可ですが、`self` 経由のフィールド変更（中身のミューテーション）は可能です。
+
 ### 列挙型
 
 ```ngs
@@ -244,11 +267,9 @@ export fn add(a: i32, b: i32) i32 {
    複数行コメント
 */
 
-@doc {
-    doc = "ドキュメントコメント"
-}
+// ドキュメントコメントも // を使用する（専用の @doc ブロック構文は現状未実装）
 fn greet(name: str) void {
-    io.println("Hello, " + name + "!")
+    println("Hello, " + name + "!")
 }
 ```
 

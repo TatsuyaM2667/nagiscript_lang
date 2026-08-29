@@ -817,6 +817,12 @@ impl<'a> FuncGen<'a> {
                 let ft = ll_type(&from);
                 let tt = ll_type(to);
                 let r = format!("%v{dst}");
+                // 変換元・先の LLVM 型が同じ（例: Usize→I64 はどちらも i64）場合は
+                // 変換命令は不要（no-op）。LLVM は `zext i64 to i64` 等を受理しない。
+                if ft == tt && !matches!(kind, CastKind::IntToBool) {
+                    self.bind(*dst, to.clone(), vo);
+                    return Ok(());
+                }
                 match kind {
                     CastKind::Trunc => self.w(&format!("{r} = trunc {ft} {vo} to {tt}")),
                     CastKind::Zext => self.w(&format!("{r} = zext {ft} {vo} to {tt}")),

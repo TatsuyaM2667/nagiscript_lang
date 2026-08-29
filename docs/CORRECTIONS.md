@@ -290,6 +290,25 @@ println(read(p))
 - **`?` 演算子（エラー伝播）は未実装。** Result 型も組み込みとしては存在せず、
   enum で自作する。
 
+### 7.1 `null`（unsafe ブロック内のみ・生ポインタ型限定）【実装済み】
+
+`null` は予約語で、**unsafe ブロックの中**で生ポインタ型（`*T`）のヌルポインタ値として
+のみ使えます。unsafe の外では「null is only allowed inside an `unsafe` block」エラー。
+
+```ngs
+fn main() {
+    unsafe {
+        val p: *u8 = null
+        if (p == null) {
+            println("null pointer")
+        }
+    }
+}
+```
+
+- 値型・文字列・その他の型に `null` を入れることはできません（型は `*u8`）。
+- 比較（`==` / `!=`）とポインタ代入に利用可能です。
+
 ---
 
 ## 8. 非同期（docs/tutorial/async.md）

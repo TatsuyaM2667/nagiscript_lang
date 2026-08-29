@@ -1,7 +1,7 @@
 # Rust
 target/
 
-# 設計ドキュメント（リポジトリにコミットしない）
+# 設計ドキュメント
 nagiscript-language-design.md
 nagiscript-language-addendum.md
 nagiscript-language-addendum2.md

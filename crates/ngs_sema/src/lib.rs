@@ -273,6 +273,7 @@ pub enum TExprKind {
     Int(u64),
     Float(f64),
     Bool(bool),
+    Null,
     Str(String),
     Local(String),
     Unary(UnOp, Box<TExpr>),
@@ -1100,6 +1101,11 @@ impl Checker {
                     }
                 }
                 Ok(mk(Bool(*b), Ty::Bool, e.span))
+            }
+            ExprKind::Null => {
+                // null は unsafe ブロック内の生ポインタ型限定 (覇権戦略 3.3)
+                self.require_unsafe(e.span, "null")?;
+                Ok(mk(Null, Ty::Ptr(Rc::new(Ty::U8)), e.span))
             }
             ExprKind::Str(s) => {
                 if let Some(t) = expected {

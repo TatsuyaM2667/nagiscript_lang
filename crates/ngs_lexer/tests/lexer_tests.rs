@@ -263,3 +263,23 @@ fn lex_fstring_escaped_braces() {
     }
 }
 
+#[test]
+fn lex_null_keyword() {
+    let toks = lex("null").unwrap();
+    assert_eq!(toks[0].kind, TokenKind::KwNull);
+}
+
+#[test]
+fn lex_null_not_identifier() {
+    // null は予約語なので Ident として扱われない
+    let toks = lex("val x = null").unwrap();
+    let mut saw_null = false;
+    for t in &toks {
+        if t.kind == TokenKind::KwNull {
+            saw_null = true;
+        }
+        assert_ne!(t.kind, TokenKind::Ident("null".into()));
+    }
+    assert!(saw_null);
+}
+

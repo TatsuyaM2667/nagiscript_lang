@@ -1,5 +1,5 @@
 use ngs_parser::parse_source;
-use ngs_ast::{Item, Stmt, ExprKind, Block};
+use ngs_ast::{Item, Stmt, ExprKind, UnOp, Block};
 
 fn parse(src: &str) -> Vec<Item> {
     parse_source(src, "test.ngs").unwrap().items
@@ -304,11 +304,11 @@ fn parse_struct_generics() {
 
 #[test]
 fn parse_address_of() {
-    let items = parse("fn f() { val p = &&x }");
+    let items = parse("fn f() { val p = &x }");
     let block = get_fn_block(&items);
     match &block.stmts[0] {
         Stmt::Let { init, .. } => {
-            assert!(matches!(init.kind, ExprKind::Unary(..)));
+            assert!(matches!(init.kind, ExprKind::Unary(UnOp::AddrOf, _)));
         }
         _ => panic!("expected val with unary"),
     }

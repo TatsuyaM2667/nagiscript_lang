@@ -571,6 +571,7 @@ impl<'a> Lowerer<'a> {
             }),
             TExprKind::Float(f) => Ok(ctx.b.const_float(*f)),
             TExprKind::Bool(b) => Ok(ctx.b.const_bool(*b)),
+            TExprKind::Null => Ok(ctx.b.const_null()),
             TExprKind::Str(s) => Ok(self.str_cell(ctx, s)),
             TExprKind::Local(name) => {
                 let slot = ctx.locals.get(name).cloned().ok_or_else(|| format!("unbound local `{name}`"))?;
