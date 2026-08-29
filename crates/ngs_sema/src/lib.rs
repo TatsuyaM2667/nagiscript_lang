@@ -298,6 +298,7 @@ pub enum TExprKind {
 #[derive(Debug, Clone)]
 pub struct TArm {
     pub pattern: TPattern,
+    pub guard: Option<TExpr>,
     pub body: TExpr,
 }
 
@@ -307,7 +308,16 @@ pub enum TPattern {
     Int(i64),
     Bool(bool),
     Str(String),
-    Variant { mangled: String, variant: usize, bindings: Vec<(String, Ty)> },
+    /// 束縛変数（バリアントのフィールド文脈）
+    Binding { name: String, ty: Ty },
+    Range { lo: i64, hi: i64, inclusive: bool },
+    Variant {
+        mangled: String,
+        variant: usize,
+        fields: Vec<TPattern>,
+        field_tys: Vec<Ty>,
+    },
+    Or(Vec<TPattern>),
 }
 
 /// f-string の型検査済みセグメント（print-time 展開用）
@@ -2459,109 +2469,29 @@ impl Checker {
         let mut has_wildcard = false;
 
         for arm in arms {
-            match &arm.pattern.kind {
-                PatternKind::Wildcard => {
-                    has_wildcard = true;
-                    let b = self.check_expr_expected(&arm.body, expected)?;
-                    tarms.push(TArm { pattern: TPattern::Wildcard, body: b });
-                }
-                PatternKind::Int(v) => {
-                    if !scr_ty.is_int() {
-                        return Err(SemaError {
-                            msg: format!("integer pattern against `{}`", scr_ty.display()),
-                            span: arm.pattern.span,
-                        });
-                    }
-                    if scr_ty != Ty::I32 && scr_ty.is_int() {
-                        // リテラル側はscr型に合わせる
-                    }
-                    let _ = v;
-                    let b = self.check_expr_expected(&arm.body, expected)?;
-                    tarms.push(TArm { pattern: TPattern::Int(*v), body: b });
-                }
-                PatternKind::Bool(v) => {
-                    if scr_ty != Ty::Bool {
-                        return Err(SemaError {
-                            msg: "bool pattern requires bool scrutinee".into(),
-                            span: arm.pattern.span,
-                        });
-                    }
-                    let b = self.check_expr_expected(&arm.body, expected)?;
-                    tarms.push(TArm { pattern: TPattern::Bool(*v), body: b });
-                }
-                PatternKind::Str(s) => {
-                    if scr_ty != Ty::Str {
-                        return Err(SemaError {
-                            msg: "string pattern requires string scrutinee".into(),
-                            span: arm.pattern.span,
-                        });
-                    }
-                    let b = self.check_expr_expected(&arm.body, expected)?;
-                    tarms.push(TArm { pattern: TPattern::Str(s.clone()), body: b });
-                }
-                PatternKind::Variant { enum_name, variant, bindings } => {
-                    let eid = match enum_name {
-                        Some(en) => {
-                            let Some((e, _, _)) = self.lookup_enum(en) else {
-                                return Err(SemaError {
-                                    msg: format!("unknown enum `{en}`"),
-                                    span: arm.pattern.span,
-                                });
-                            };
-                            e
-                        }
-                        None => match scr_ty {
-                            Ty::Enum(e, _) => e,
-                            ref other => {
-                                return Err(SemaError {
-                                    msg: format!("variant pattern against non-enum `{}`", other.display()),
-                                    span: arm.pattern.span,
-                                })
-                            }
-                        },
-                    };
-                    if !matches!(scr_ty, Ty::Enum(id, _) if id == eid) {
-                        return Err(SemaError {
-                            msg: format!("pattern enum does not match scrutinee type `{}`", scr_ty.display()),
-                            span: arm.pattern.span,
-                        });
-                    }
-                    let Ty::Enum(_, substs) = scr_ty.clone() else { unreachable!() };
-                    let mono = self.intern_enum(eid, substs.clone())?;
-                    let me = self.out.enums[mono].clone();
-                    let Some(vi) = me.variants.iter().position(|(vn, _)| vn == variant) else {
-                        return Err(SemaError {
-                            msg: format!("enum `{}` has no variant `{}`", me.mangled, variant),
-                            span: arm.pattern.span,
-                        });
-                    };
-                    let payload_tys = me.variants[vi].1.clone();
-                    if bindings.len() != payload_tys.len() {
-                        return Err(SemaError {
-                            msg: format!(
-                                "variant `{}` has {} payload(s), pattern binds {}",
-                                variant,
-                                payload_tys.len(),
-                                bindings.len()
-                            ),
-                            span: arm.pattern.span,
-                        });
-                    }
-                    self.push_scope();
-                    let mut tb = Vec::new();
-                    for (bn, bt) in bindings.iter().zip(payload_tys.iter()) {
-                        self.declare_var(bn.clone(), bt.clone(), false);
-                        tb.push((bn.clone(), bt.clone()));
-                    }
-                    let b = self.check_expr_expected(&arm.body, expected)?;
-                    self.pop_scope();
-                    covered_variants.insert(vi);
-                    tarms.push(TArm {
-                        pattern: TPattern::Variant { mangled: me.mangled.clone(), variant: vi, bindings: tb },
-                        body: b,
-                    });
-                }
+            self.push_scope();
+            let (tpat, covered) = self.check_pattern(&arm.pattern, &scr_ty)?;
+            covered_variants.extend(covered);
+            // ワイルドカードと、全体を束縛する (top-level) パターンは網羅
+            if pattern_has_wildcard(&tpat) || matches!(tpat, TPattern::Binding { .. }) {
+                has_wildcard = true;
             }
+            let tguard = match &arm.guard {
+                Some(g) => {
+                    let tg = self.check_expr_expected(g, Some(&Ty::Bool))?;
+                    if tg.ty != Ty::Bool {
+                        return Err(SemaError {
+                            msg: "match guard must be a bool expression".into(),
+                            span: g.span,
+                        });
+                    }
+                    Some(tg)
+                }
+                None => None,
+            };
+            let b = self.check_expr_expected(&arm.body, expected)?;
+            self.pop_scope();
+            tarms.push(TArm { pattern: tpat, guard: tguard, body: b });
         }
 
         // 網羅性
@@ -2592,6 +2522,157 @@ impl Checker {
             None => tarms.first().map(|a| a.body.ty.clone()).unwrap_or(Ty::Void),
         };
         Ok(mk(TExprKind::Match { scrutinee: Box::new(scr), arms: tarms }, ty, span))
+    }
+
+    /// パターンを型検査し、型付きパターンと（enum の場合の）カバーする
+    /// バリアント番号の集合を返す。束縛変数は現在スコープに宣言する。
+    fn check_pattern(
+        &mut self,
+        pat: &Pattern,
+        scr_ty: &Ty,
+    ) -> Result<(TPattern, HashSet<usize>), SemaError> {
+        let covered = HashSet::new();
+        match &pat.kind {
+            PatternKind::Wildcard => Ok((TPattern::Wildcard, covered)),
+            PatternKind::Int(v) => {
+                if !scr_ty.is_int() {
+                    return Err(SemaError {
+                        msg: format!("integer pattern against `{}`", scr_ty.display()),
+                        span: pat.span,
+                    });
+                }
+                Ok((TPattern::Int(*v), covered))
+            }
+            PatternKind::Bool(v) => {
+                if *scr_ty != Ty::Bool {
+                    return Err(SemaError {
+                        msg: "bool pattern requires bool scrutinee".into(),
+                        span: pat.span,
+                    });
+                }
+                Ok((TPattern::Bool(*v), covered))
+            }
+            PatternKind::Str(s) => {
+                if *scr_ty != Ty::Str {
+                    return Err(SemaError {
+                        msg: "string pattern requires string scrutinee".into(),
+                        span: pat.span,
+                    });
+                }
+                Ok((TPattern::Str(s.clone()), covered))
+            }
+            PatternKind::Binding(name) => {
+                self.declare_var(name.clone(), scr_ty.clone(), false);
+                Ok((TPattern::Binding { name: name.clone(), ty: scr_ty.clone() }, covered))
+            }
+            PatternKind::Range { lo, hi, inclusive } => {
+                if !scr_ty.is_int() {
+                    return Err(SemaError {
+                        msg: format!("range pattern against `{}`", scr_ty.display()),
+                        span: pat.span,
+                    });
+                }
+                if (!inclusive && lo >= hi) || (*inclusive && lo > hi) {
+                    return Err(SemaError {
+                        msg: "empty range pattern".into(),
+                        span: pat.span,
+                    });
+                }
+                Ok((
+                    TPattern::Range { lo: *lo, hi: *hi, inclusive: *inclusive },
+                    covered,
+                ))
+            }
+            PatternKind::Variant { enum_name, variant, fields } => {
+                let eid = match enum_name {
+                    Some(en) => {
+                        let Some((e, _, _)) = self.lookup_enum(en) else {
+                            return Err(SemaError {
+                                msg: format!("unknown enum `{en}`"),
+                                span: pat.span,
+                            });
+                        };
+                        e
+                    }
+                    None => match scr_ty {
+                        Ty::Enum(e, _) => *e,
+                        ref other => {
+                            return Err(SemaError {
+                                msg: format!("variant pattern against non-enum `{}`", other.display()),
+                                span: pat.span,
+                            })
+                        }
+                    },
+                };
+                if !matches!(scr_ty, Ty::Enum(id, _) if *id == eid) {
+                    return Err(SemaError {
+                        msg: format!("pattern enum does not match scrutinee type `{}`", scr_ty.display()),
+                        span: pat.span,
+                    });
+                }
+                let Ty::Enum(_, substs) = scr_ty.clone() else { unreachable!() };
+                let mono = self.intern_enum(eid, substs.clone())?;
+                let me = self.out.enums[mono].clone();
+                let Some(vi) = me.variants.iter().position(|(vn, _)| vn == variant) else {
+                    return Err(SemaError {
+                        msg: format!("enum `{}` has no variant `{}`", me.mangled, variant),
+                        span: pat.span,
+                    });
+                };
+                let payload_tys = me.variants[vi].1.clone();
+                if fields.len() != payload_tys.len() {
+                    return Err(SemaError {
+                        msg: format!(
+                            "variant `{}` has {} payload(s), pattern has {} field(s)",
+                            variant,
+                            payload_tys.len(),
+                            fields.len()
+                        ),
+                        span: pat.span,
+                    });
+                }
+                let mut tf = Vec::new();
+                for (fp, ft) in fields.iter().zip(payload_tys.iter()) {
+                    let (tfp, _) = self.check_pattern(fp, ft)?;
+                    tf.push(tfp);
+                }
+                let mut covered2 = HashSet::new();
+                covered2.insert(vi);
+                Ok((
+                    TPattern::Variant {
+                        mangled: me.mangled.clone(),
+                        variant: vi,
+                        fields: tf,
+                        field_tys: payload_tys,
+                    },
+                    covered2,
+                ))
+            }
+            PatternKind::Or(alts) => {
+                if alts.is_empty() {
+                    return Err(SemaError {
+                        msg: "empty OR pattern".into(),
+                        span: pat.span,
+                    });
+                }
+                let mut tvs = Vec::new();
+                let mut covered2 = HashSet::new();
+                for ap in alts {
+                    let (tp, c) = self.check_pattern(ap, scr_ty)?;
+                    tvs.push(tp);
+                    covered2.extend(c);
+                }
+                Ok((TPattern::Or(tvs), covered2))
+            }
+        }
+    }
+}
+
+fn pattern_has_wildcard(p: &TPattern) -> bool {
+    match p {
+        TPattern::Wildcard => true,
+        TPattern::Or(alts) => alts.iter().any(pattern_has_wildcard),
+        _ => false,
     }
 }
 

@@ -874,9 +874,15 @@ impl Parser {
         let mut arms = Vec::new();
         while !self.at(&TokenKind::RBrace) && !self.at_eof() {
             let pattern = self.parse_pattern()?;
+            // ガード `pat if cond => body`
+            let guard = if self.eat(&TokenKind::KwIf) {
+                Some(self.parse_expr()?)
+            } else {
+                None
+            };
             self.expect(&TokenKind::FatArrow, "`=>` after match pattern")?;
             let body = self.parse_match_arm_body()?;
-            arms.push(MatchArm { pattern, body });
+            arms.push(MatchArm { pattern, guard, body });
             self.eat(&TokenKind::Comma);
         }
         let end = self.expect(&TokenKind::RBrace, "`}` closing match")?.span.hi;
@@ -896,11 +902,46 @@ impl Parser {
         }
     }
 
+    /// match 腕のパターン（裸 Ident はバリアント扱い）
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        self.parse_or_pattern(false)
+    }
+
+    /// OR パターン。`bare_is_binding`=true なら裸 Ident を束縛変数として扱う
+    /// （バリアントのフィールド文脈で使う）。
+    fn parse_or_pattern(&mut self, bare_is_binding: bool) -> Result<Pattern, ParseError> {
+        let first = self.parse_pattern_atom(bare_is_binding)?;
+        if !self.at(&TokenKind::Pipe) {
+            return Ok(first);
+        }
+        let mut alts = vec![first];
+        while self.at(&TokenKind::Pipe) {
+            self.bump();
+            alts.push(self.parse_pattern_atom(bare_is_binding)?);
+        }
+        let span = Span::new(alts[0].span.lo, alts[alts.len() - 1].span.hi);
+        Ok(Pattern { kind: PatternKind::Or(alts), span })
+    }
+
+    fn parse_pattern_atom(&mut self, bare_is_binding: bool) -> Result<Pattern, ParseError> {
         let t = self.peek();
         match t.kind {
             TokenKind::IntLit(v) => {
                 self.bump();
+                // 範囲パターン lo..hi / lo..=hi
+                if self.at(&TokenKind::DotDot) || self.at(&TokenKind::DotDotEq) {
+                    let inclusive = self.at(&TokenKind::DotDotEq);
+                    self.bump();
+                    let ht = self.peek();
+                    let TokenKind::IntLit(hi) = ht.kind else {
+                        return Err(self.err("range upper bound must be an integer literal"));
+                    };
+                    self.bump();
+                    return Ok(Pattern {
+                        kind: PatternKind::Range { lo: v as i64, hi: hi as i64, inclusive },
+                        span: Span::new(t.span.lo, ht.span.hi),
+                    });
+                }
                 Ok(Pattern { kind: PatternKind::Int(v as i64), span: t.span })
             }
             TokenKind::FloatLit(_) => Err(self.err("float patterns are not supported")),
@@ -922,23 +963,59 @@ impl Parser {
                     return Ok(Pattern { kind: PatternKind::Wildcard, span: t.span });
                 }
                 self.bump();
-                // Variant(payloads...) 形式
-                let mut bindings = Vec::new();
-                if self.eat(&TokenKind::LParen) {
-                    loop {
-                        let (b, _) = self.ident()?;
-                        bindings.push(b);
-                        if !self.eat(&TokenKind::Comma) { break; }
-                    }
-                    self.expect(&TokenKind::RParen, "`)` after pattern bindings")?;
+                // qualified path `Enum.Variant(...)`
+                if self.at(&TokenKind::Dot) {
+                    self.bump();
+                    let (var, vspan) = self.ident()?;
+                    let fields = self.parse_pattern_fields()?;
+                    return Ok(Pattern {
+                        kind: PatternKind::Variant {
+                            enum_name: Some(name),
+                            variant: var,
+                            fields,
+                        },
+                        span: Span::new(t.span.lo, vspan.hi),
+                    });
                 }
-                Ok(Pattern {
-                    kind: PatternKind::Variant { enum_name: None, variant: name, bindings },
-                    span: t.span,
-                })
+                // 裸 Ident
+                let fields = self.parse_pattern_fields()?;
+                let starts_lower = name.chars().next().map_or(false, |c| c.is_lowercase());
+                if fields.is_empty() && (bare_is_binding || starts_lower) {
+                    // 束縛変数（フィールド文脈、または小文字始まりの裸 Ident・arm の guard 用）
+                    Ok(Pattern { kind: PatternKind::Binding(name), span: t.span })
+                } else {
+                    // バリアント（大文字始まりの裸 Ident、または括弧付き）
+                    Ok(Pattern {
+                        kind: PatternKind::Variant { enum_name: None, variant: name, fields },
+                        span: t.span,
+                    })
+                }
+            }
+            TokenKind::LParen => {
+                // グループ化 `(subpattern)`
+                self.bump();
+                let sub = self.parse_or_pattern(bare_is_binding)?;
+                self.expect(&TokenKind::RParen, "`)` in pattern")?;
+                Ok(sub)
             }
             _ => Err(self.err("expected match pattern")),
         }
+    }
+
+    fn parse_pattern_fields(&mut self) -> Result<Vec<Pattern>, ParseError> {
+        if !self.at(&TokenKind::LParen) {
+            return Ok(vec![]);
+        }
+        self.bump();
+        let mut fields = Vec::new();
+        while !self.at(&TokenKind::RParen) {
+            fields.push(self.parse_or_pattern(true)?);
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RParen, "`)` after pattern bindings")?;
+        Ok(fields)
     }
 
     // ------------------------------------------------------------------

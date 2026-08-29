@@ -156,3 +156,144 @@ fn main() {
     assert_eq!(code2, 1);
     assert!(se2.contains("only allowed inside an `unsafe` block"), "stderr={se2}");
 }
+
+const MATCH_VARIANTS: &str = r#"
+enum Shape { Circle(i32), Point(i32, i32), Square }
+fn r(s: Shape) -> i32 {
+    return match s {
+        Shape.Circle(r) => r
+        Shape.Point(x, y) => x + y
+        Shape.Square => 0
+    }
+}
+fn main() {
+    println(r(Shape.Circle(7)))
+    println(r(Shape.Point(3, 40)))
+    println(r(Shape.Square()))
+}
+"#;
+
+#[test]
+fn match_qualified_variant_bindings() {
+    let p = write_tmp("m_variants.ngs", MATCH_VARIANTS);
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "7\n43\n0\n");
+}
+
+const MATCH_RANGE: &str = r#"
+fn grade(n: i32) -> string {
+    return match n {
+        90..=100 => "A"
+        80..89 => "B"
+        _ => "C"
+    }
+}
+fn main() {
+    println(grade(95))
+    println(grade(85))
+    println(grade(40))
+}
+"#;
+
+#[test]
+fn match_range_patterns() {
+    let p = write_tmp("m_range.ngs", MATCH_RANGE);
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "A\nB\nC\n");
+}
+
+const MATCH_OR_GUARD: &str = r#"
+fn vowel(c: string) -> string {
+    return match c {
+        "a" | "e" | "i" | "o" | "u" => "vowel"
+        _ => "consonant"
+    }
+}
+fn note(v: i32) -> string {
+    return match v {
+        n if n >= 90 => "high"
+        n if n >= 70 => "mid"
+        _ => "low"
+    }
+}
+fn main() {
+    println(vowel("a"))
+    println(vowel("b"))
+    println(note(100))
+    println(note(80))
+    println(note(10))
+}
+"#;
+
+#[test]
+fn match_or_and_guards() {
+    let p = write_tmp("m_or_guard.ngs", MATCH_OR_GUARD);
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "vowel\nconsonant\nhigh\nmid\nlow\n");
+}
+
+const MATCH_NESTED: &str = r#"
+enum Inner { Num(i32) }
+enum Outer { Box(Inner) }
+fn f(o: Outer) -> i32 {
+    return match o {
+        Outer.Box(Inner.Num(n)) => n + 1
+    }
+}
+fn main() { println(f(Outer.Box(Inner.Num(41)))) }
+"#;
+
+#[test]
+fn match_nested_variant_pattern() {
+    let p = write_tmp("m_nested.ngs", MATCH_NESTED);
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "42\n");
+}
+
+const MATCH_WILDCARD_FIELD: &str = r#"
+enum Pt { Coord(i32, i32) }
+fn x(p: Pt) -> i32 {
+    return match p {
+        Pt.Coord(a, _) => a
+    }
+}
+fn main() { println(x(Pt.Coord(5, 9))) }
+"#;
+
+#[test]
+fn match_wildcard_field() {
+    let p = write_tmp("m_wild.ngs", MATCH_WILDCARD_FIELD);
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "5\n");
+}
+
+const MATCH_BINDING: &str = r#"
+fn id(n: i32) -> i32 {
+    return match n {
+        x => x
+    }
+}
+fn main() { println(id(9)) }
+"#;
+
+#[test]
+fn match_top_level_binding_covers() {
+    let p = write_tmp("m_bind.ngs", MATCH_BINDING);
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "9\n");
+}
+
+#[test]
+fn match_missing_variant_non_exhaustive() {
+    let p = write_tmp("m_nonex.ngs",
+        "enum Color { Red, Green, Blue }\nfn f(c: Color) -> i32 { return match c { Color.Red => 1 Color.Green => 2 } }\nfn main() {}\n");
+    let (code, _so, se) = run(&["check", p.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(se.contains("missing variant(s) Blue"), "stderr={se}");
+}

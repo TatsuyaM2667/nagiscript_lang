@@ -18,7 +18,7 @@
 //! - Rc の束縛・代入は rc_inc / 古い値の rc_dec。Call 結果の直接移転は inc 不要。
 //! - 安全な文脈の整数演算(e.checked)は with.overflow へ、List 添字は境界検査を挟む。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::*;
@@ -1019,104 +1019,92 @@ impl<'a> Lowerer<'a> {
         let cell = if void { NO_V } else { ctx.b.alloca(ct.clone()) };
         let (_, end_label) = ctx.b.new_block("match.end");
 
-        let mut has_wildcard = false;
-        for arm in arms {
-            let body = &arm.body;
+        // スクルティニーをメモリスロットへ正規化（各パターンはスロットから読む）
+        let sl_ty = cell_ty(&sty);
+        let slot = ctx.b.alloca(sl_ty.clone());
+        ctx.b.store(slot, sv, sl_ty);
+
+        // パターン束縛は借り参照（rc=false）なので、退出時はブックキープのみでよい。
+        // 各アームの開始時と match 終了時にオーバーフローの束縛を切り落とす。
+        let mbase = ctx.order.len();
+        ctx.truncate(mbase);
+
+        // 先頭アームのテストブロックへ遷移
+        let (first_idx, first_label) = ctx.b.new_block("match.arm0");
+        ctx.b.br(&first_label);
+        let mut next = {
+            ctx.b.position(first_idx);
+            first_idx
+        };
+
+        for (i, arm) in arms.iter().enumerate() {
+            ctx.b.position(next);
+            ctx.truncate(mbase);
             if matches!(arm.pattern, TPattern::Wildcard) {
-                has_wildcard = true;
-                self.arm_body(ctx, body, cell, ct.clone(), void, &end_label)?;
+                // ワイルドカード: 常にマッチ（後続アームは到達不能）
+                self.arm_body(ctx, &arm.body, cell, ct.clone(), void, &end_label)?;
                 break;
             }
-            let (_, next_label) = ctx.b.new_block("match.next");
-            match &arm.pattern {
-                TPattern::Wildcard => unreachable!("handled above"),
-                TPattern::Int(vv) => {
-                    let pv = const_int_for(&mut ctx.b, &sty, *vv as u64);
-                    let eq = ctx.b.cmp(IrPred::Eq, sty.clone(), sv, pv);
-                    let (bi, bl) = ctx.b.new_block("match.arm");
-                    ctx.b.cond_br(eq, &bl, &next_label);
-                    ctx.b.position(bi);
-                    self.arm_body(ctx, body, cell, ct.clone(), void, &end_label)?;
-                }
-                TPattern::Bool(vv) => {
-                    let pv = ctx.b.const_bool(*vv);
-                    let eq = ctx.b.cmp(IrPred::Eq, IrType::Bool, sv, pv);
-                    let (bi, bl) = ctx.b.new_block("match.arm");
-                    ctx.b.cond_br(eq, &bl, &next_label);
-                    ctx.b.position(bi);
-                    self.arm_body(ctx, body, cell, ct.clone(), void, &end_label)?;
-                }
-                TPattern::Str(ss) => {
-                    let lit = ctx.b.str_lit(ss);
-                    let eq = ctx
-                        .b
-                        .call("__ngs_str_eq", vec![sv, lit], IrType::Bool)
-                        .ok_or("__ngs_str_eq failed")?;
-                    let (bi, bl) = ctx.b.new_block("match.arm");
-                    ctx.b.cond_br(eq, &bl, &next_label);
-                    ctx.b.position(bi);
-                    self.arm_body(ctx, body, cell, ct.clone(), void, &end_label)?;
-                }
-                TPattern::Variant { mangled, variant, bindings } => {
-                    let tagp = ctx.b.addr_off(sv, 0);
-                    let tag = ctx.b.load(tagp, IrType::Usize);
-                    let want = ctx.b.const_int(*variant as u64);
-                    let eq = ctx.b.cmp(IrPred::Eq, IrType::Usize, tag, want);
-                    let (bi, bl) = ctx.b.new_block("match.arm");
-                    ctx.b.cond_br(eq, &bl, &next_label);
-                    ctx.b.position(bi);
-                    // ペイロードをバインディング変数として登録
-                    let eid = self.enum_by_mangled(mangled)?;
-                    let _ = eid;
-                    let base = ctx.order.len();
-                    for (i, (bn, bt)) in bindings.iter().enumerate() {
-                        let btir = self.conv(bt)?;
-                        let slot_addr = ctx.b.addr_off(sv, Self::payload_off(i));
-                        let bct = cell_ty(&btir);
-                        if is_val_ptr(&btir) || is_rc_ty(bt) {
-                            // スロット自体がセル（ポインタが入っている）
-                            ctx.declare(
-                                bn.clone(),
-                                LocalSlot {
-                                    cell: slot_addr,
-                                    ty: btir,
-                                    rc: is_rc_ty(bt),
-                                    list_elem_size: None,
-                                },
-                            );
-                        } else {
-                            let c = ctx.b.alloca(bct.clone());
-                            let loaded = ctx.b.load(slot_addr, bct.clone());
-                            ctx.b.store(c, loaded, bct);
-                            ctx.declare(
-                                bn.clone(),
-                                LocalSlot {
-                                    cell: c,
-                                    ty: btir,
-                                    rc: false,
-                                    list_elem_size: None,
-                                },
-                            );
-                        }
-                    }
-                    self.arm_body_scoped(ctx, body, cell, ct.clone(), void, &end_label, base)?;
-                }
+            // fail ブロック（次のアームへ / 最後は panic）
+            let (nidx, nlabel);
+            if i + 1 < arms.len() {
+                let nb = ctx.b.new_block("match.next");
+                nidx = nb.0;
+                nlabel = nb.1;
+            } else {
+                let nb = ctx.b.new_block("match.none");
+                nidx = nb.0;
+                nlabel = nb.1;
             }
-            // 次の腕のテストは next ブロックで
+
+            // このアームが束縛する変数セルを確保
+            let mut blist: Vec<(String, Ty)> = Vec::new();
+            collect_pattern_bindings(&arm.pattern, &mut blist);
+            let mut bcells: HashMap<String, V> = HashMap::new();
+            for (name, bty) in &blist {
+                let birt = self.conv(bty)?;
+                let bct = cell_ty(&birt);
+                let bc = ctx.b.alloca(bct.clone());
+                bcells.insert(name.clone(), bc);
+            }
+
+            // パターンをコンパイル。マッチした続きのブロックを返す
+            let matched = self.compile_pattern(ctx, slot, &sty, &arm.pattern, &bcells, &nlabel)?;
+            ctx.b.position(matched);
+
+            // ガード
+            if let Some(guard) = &arm.guard {
+                let gv = self.expr(ctx, guard)?;
+                let (bidx, blabel) = ctx.b.new_block("match.body");
+                ctx.b.cond_br(gv, &blabel, &nlabel);
+                ctx.b.position(bidx);
+            }
+            self.arm_body(ctx, &arm.body, cell, ct.clone(), void, &end_label)?;
+
             let idx = ctx
                 .b
                 .func
-                .find_block(&next_label)
+                .find_block(&nlabel)
                 .ok_or_else(|| "internal error: missing match.next block".to_string())?;
             ctx.b.position(idx);
+            let _ = nidx;
+            next = idx;
         }
 
-        if !has_wildcard {
-            // どの腕も通らなかったケース（sema で網羅性は保証済みだが安全のため）
-            if matches!(ctx.b.func.blocks[ctx.b.cur].term, Term::Unreachable) {
+        // どの腕も通らなかった場合（sema で網羅性は保証済みだが安全のため）
+        ctx.truncate(mbase);
+        if !matches!(ctx.b.func.blocks[ctx.b.cur].term, Term::Unreachable) {
+            // 最後のアームの fail ブロック（残っていれば）で panic
+            let cur = ctx.b.cur;
+            let is_fresh = {
+                let blk = &ctx.b.func.blocks[cur];
+                blk.insts.is_empty() && matches!(blk.term, Term::Unreachable)
+            };
+            if is_fresh {
                 self.emit_panic(ctx, "non-exhaustive match")?;
             }
         }
+
         let eidx = ctx
             .b
             .func
@@ -1127,7 +1115,145 @@ impl<'a> Lowerer<'a> {
         if void {
             Ok(NO_V)
         } else {
+            if matches!(ctx.b.func.blocks[eidx].term, Term::Unreachable) {}
             Ok(ctx.b.load(cell, ct))
+        }
+    }
+
+    /// パターンを IR へコンパイルする。
+    ///
+    /// - `slot` は調査対象の値が入るメモリスロット（セル型 = cell_ty(vt)）。
+    /// - `vt` はスロットに入る値の IR 型（aggregate は構造体型）。
+    /// - マッチしなければ `fail` ラベルへ分岐する。
+    /// - マッチしたら（束縛も登録済みで）継続ブロックのインデックスを返す。
+    fn compile_pattern(
+        &mut self,
+        ctx: &mut FnCtx,
+        slot: V,
+        vt: &IrType,
+        pat: &TPattern,
+        bcells: &HashMap<String, V>,
+        fail: &str,
+    ) -> Result<usize, String> {
+        match pat {
+            TPattern::Wildcard => Ok(ctx.b.cur),
+            TPattern::Int(vv) => {
+                let pv = const_int_for(&mut ctx.b, vt, *vv as u64);
+                let val = ctx.b.load(slot, vt.clone());
+                let eq = ctx.b.cmp(IrPred::Eq, vt.clone(), val, pv);
+                let (t_idx, t_label) = ctx.b.new_block("m.i");
+                ctx.b.cond_br(eq, &t_label, fail);
+                ctx.b.position(t_idx);
+                Ok(t_idx)
+            }
+            TPattern::Bool(vv) => {
+                let val = ctx.b.load(slot, IrType::Bool);
+                let pv = ctx.b.const_bool(*vv);
+                let eq = ctx.b.cmp(IrPred::Eq, IrType::Bool, val, pv);
+                let (t_idx, t_label) = ctx.b.new_block("m.b");
+                ctx.b.cond_br(eq, &t_label, fail);
+                ctx.b.position(t_idx);
+                Ok(t_idx)
+            }
+            TPattern::Str(ss) => {
+                let val = ctx.b.load(slot, IrType::Ptr(Rc::new(vt.clone())));
+                let lit = ctx.b.str_lit(ss);
+                let eq = ctx
+                    .b
+                    .call("__ngs_str_eq", vec![val, lit], IrType::Bool)
+                    .ok_or("__ngs_str_eq failed")?;
+                let (t_idx, t_label) = ctx.b.new_block("m.s");
+                ctx.b.cond_br(eq, &t_label, fail);
+                ctx.b.position(t_idx);
+                Ok(t_idx)
+            }
+            TPattern::Binding { name, ty } => {
+                let cell = bcells
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| format!("internal: missing binding cell for `{name}`"))?;
+                let birt = self.conv(ty)?;
+                let bct = cell_ty(&birt);
+                let bound = if is_val_ptr(vt) {
+                    ctx.b.load(slot, IrType::Ptr(Rc::new(vt.clone())))
+                } else {
+                    ctx.b.load(slot, vt.clone())
+                };
+                ctx.b.store(cell, bound, bct);
+                // 借り参照（rc=false）。元のペイロード/スロットが所有権を保持
+                ctx.declare(
+                    name.clone(),
+                    LocalSlot { cell, ty: birt, rc: false, list_elem_size: None },
+                );
+                Ok(ctx.b.cur)
+            }
+            TPattern::Range { lo, hi, inclusive } => {
+                let val = ctx.b.load(slot, vt.clone());
+                let lo_c = const_int_for(&mut ctx.b, vt, *lo as u64);
+                let hi_c = const_int_for(&mut ctx.b, vt, *hi as u64);
+                let ge = ctx.b.cmp(IrPred::Ge, vt.clone(), val, lo_c);
+                let (r1_idx, r1_label) = ctx.b.new_block("m.r1");
+                let (f_idx, f_label) = ctx.b.new_block("m.rx");
+                ctx.b.cond_br(ge, &r1_label, &f_label);
+                ctx.b.position(f_idx);
+                ctx.b.br(fail);
+                ctx.b.position(r1_idx);
+                let lt = if *inclusive {
+                    ctx.b.cmp(IrPred::Le, vt.clone(), val, hi_c)
+                } else {
+                    ctx.b.cmp(IrPred::Lt, vt.clone(), val, hi_c)
+                };
+                let (t_idx, t_label) = ctx.b.new_block("m.r");
+                ctx.b.cond_br(lt, &t_label, fail);
+                ctx.b.position(t_idx);
+                Ok(t_idx)
+            }
+            TPattern::Variant { variant, fields, field_tys, .. } => {
+                let obj = ctx.b.load(slot, IrType::Ptr(Rc::new(vt.clone())));
+                let tagp = ctx.b.addr_off(obj, 0);
+                let tag = ctx.b.load(tagp, IrType::Usize);
+                let want = ctx.b.const_int(*variant as u64);
+                let eq = ctx.b.cmp(IrPred::Eq, IrType::Usize, tag, want);
+                let (t_idx, t_label) = ctx.b.new_block("m.v");
+                ctx.b.cond_br(eq, &t_label, fail);
+                ctx.b.position(t_idx);
+                let mut cur = t_idx;
+                for (i, fp) in fields.iter().enumerate() {
+                    let fslot = ctx.b.addr_off(obj, Self::payload_off(i));
+                    let firt = self.conv(&field_tys[i])?;
+                    cur = self.compile_pattern(ctx, fslot, &firt, fp, bcells, fail)?;
+                }
+                Ok(cur)
+            }
+            TPattern::Or(alts) => {
+                let (m_idx, m_label) = ctx.b.new_block("m.or");
+                let mut entries: Vec<(usize, String)> = (0..alts.len())
+                    .map(|_| ctx.b.new_block("m.alt"))
+                    .collect();
+                let mut conts = Vec::new();
+                for (i, ap) in alts.iter().enumerate() {
+                    let fail_lbl = if i + 1 < alts.len() {
+                        entries[i + 1].1.clone()
+                    } else {
+                        fail.to_string()
+                    };
+                    if i == 0 {
+                        // 先頭 alternative は現在のブロックでコンパイル
+                        let c = self.compile_pattern(ctx, slot, vt, ap, bcells, &fail_lbl)?;
+                        conts.push(c);
+                    } else {
+                        ctx.b.position(entries[i].0);
+                        let c = self.compile_pattern(ctx, slot, vt, ap, bcells, &fail_lbl)?;
+                        conts.push(c);
+                    }
+                }
+                for c in conts {
+                    ctx.b.position(c);
+                    ctx.b.br(&m_label);
+                }
+                ctx.b.position(m_idx);
+                Ok(m_idx)
+            }
         }
     }
 
@@ -1670,6 +1796,32 @@ fn const_int_for(b: &mut FnBuilder, sty: &IrType, v: u64) -> V {
     } else {
         b.const_int(v)
     }
+}
+
+/// パターンが束縛する変数名と型を（名前で重複除去して）収集する。
+fn collect_pattern_bindings(pat: &TPattern, out: &mut Vec<(String, Ty)>) {
+    fn rec(pat: &TPattern, out: &mut Vec<(String, Ty)>, seen: &mut HashSet<String>) {
+        match pat {
+            TPattern::Binding { name, ty } => {
+                if seen.insert(name.clone()) {
+                    out.push((name.clone(), ty.clone()));
+                }
+            }
+            TPattern::Variant { fields, .. } => {
+                for f in fields {
+                    rec(f, out, seen);
+                }
+            }
+            TPattern::Or(alts) => {
+                for a in alts {
+                    rec(a, out, seen);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut seen = HashSet::new();
+    rec(pat, out, &mut seen);
 }
 
 /// 生ポインタへの添字は unsafe 文脈で境界検査なし。それ以外は検査あり。

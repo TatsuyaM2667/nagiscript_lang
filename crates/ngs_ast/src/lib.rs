@@ -110,6 +110,7 @@ pub enum TokenKind {
     Semi,
     Dot,
     DotDot,
+    DotDotEq,
 
     Pipe,      // |  (lambda params)
     PipePipe,  // || (or-op / empty lambda)
@@ -385,6 +386,8 @@ pub enum FStringPart {
 #[derive(Debug, Clone)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    /// ガード条件 `pat if cond => body`（省略可）
+    pub guard: Option<Expr>,
     pub body: Expr,
 }
 
@@ -400,10 +403,16 @@ pub enum PatternKind {
     Int(i64),
     Bool(bool),
     Str(String),
-    /// Circle(r) / Shape.Circle(r)。bindings は payload 束縛名
+    /// 束縛変数（payload 内の識別子）
+    Binding(String),
+    /// 範囲パターン `lo..hi` / `lo..=hi`
+    Range { lo: i64, hi: i64, inclusive: bool },
+    /// Circle(r) / Shape.Circle(r)。fields は payload サブパターン
     Variant {
         enum_name: Option<String>,
         variant: String,
-        bindings: Vec<String>,
+        fields: Vec<Pattern>,
     },
+    /// OR パターン `p1 | p2`
+    Or(Vec<Pattern>),
 }

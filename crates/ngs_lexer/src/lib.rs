@@ -166,6 +166,13 @@ impl<'a> Lexer<'a> {
         if two(b'|', b'|') { two_tok!(TokenKind::OrOr); }
         if two(b'-', b'>') { two_tok!(TokenKind::Arrow); }
         if two(b'=', b'>') { two_tok!(TokenKind::FatArrow); }
+        if two(b'.', b'.') && self.src.get(self.pos + 2) == Some(&b'=') {
+            // `..=`（三文字）
+            self.bump();
+            self.bump();
+            self.bump();
+            return Ok(self.make(TokenKind::DotDotEq, start));
+        }
         if two(b'.', b'.') { two_tok!(TokenKind::DotDot); }
         if two(b'+', b'=') { two_tok!(TokenKind::PlusAssign); }
         if two(b'-', b'=') { two_tok!(TokenKind::MinusAssign); }

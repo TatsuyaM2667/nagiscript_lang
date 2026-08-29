@@ -173,6 +173,14 @@ fn lex_for_loop() {
 }
 
 #[test]
+fn lex_inclusive_range_dotdot_eq() {
+    let toks = lex("1..=3").unwrap();
+    assert_eq!(toks[0].kind, TokenKind::IntLit(1));
+    assert_eq!(toks[1].kind, TokenKind::DotDotEq);
+    assert_eq!(toks[2].kind, TokenKind::IntLit(3));
+}
+
+#[test]
 fn lex_match_expression() {
     let toks = lex("match x { Circle(r) => 1, _ => 0 }").unwrap();
     assert_eq!(toks[0].kind, TokenKind::KwMatch);
