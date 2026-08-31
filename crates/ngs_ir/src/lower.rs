@@ -437,7 +437,7 @@ impl<'a> Lowerer<'a> {
                 }
                 ctx.b.position(eb);
             }
-            TStmt::ForRange(var, vty, start, end, body) => {
+            TStmt::ForRange(var, vty, start, end, step, body) => {
                 let ity = self.conv(vty)?;
                 let sv = self.expr(ctx, start)?;
                 let ev = self.expr(ctx, end)?;
@@ -445,6 +445,12 @@ impl<'a> Lowerer<'a> {
                 ctx.b.store(ia, sv, ity.clone());
                 let ea = ctx.b.alloca(ity.clone());
                 ctx.b.store(ea, ev, ity.clone());
+                let sta = ctx.b.alloca(ity.clone());
+                let stev = match step {
+                    Some(s) => self.expr(ctx, s)?,
+                    None => ctx.b.const_int(1),
+                };
+                ctx.b.store(sta, stev, ity.clone());
 
                 let (cb, cl) = ctx.b.new_block("for.cond");
                 let (bb, bl) = ctx.b.new_block("for.body");
@@ -454,17 +460,22 @@ impl<'a> Lowerer<'a> {
                 ctx.b.position(cb);
                 let iv = ctx.b.load(ia, ity.clone());
                 let ev2 = ctx.b.load(ea, ity.clone());
-                let lt = ctx.b.cmp(IrPred::Lt, ity.clone(), iv, ev2);
-                ctx.b.cond_br(lt, &bl, &el);
+                let stepv = ctx.b.load(sta, ity.clone());
+                // 昇順/降順共通の継続条件: step * (end - i) > 0
+                let d = ctx.b.binop(IrBin::Sub, ity.clone(), ev2, iv);
+                let prod = ctx.b.binop(IrBin::Mul, ity.clone(), stepv, d);
+                let zero = ctx.b.const_int(0);
+                let cont = ctx.b.cmp(IrPred::Gt, ity.clone(), prod, zero);
+                ctx.b.cond_br(cont, &bl, &el);
 
                 ctx.b.position(bb);
+                let base = ctx.order.len();
                 ctx.declare(
                     var.clone(),
                     LocalSlot { cell: ia, ty: ity.clone(), rc: false, list_elem_size: None },
                 );
                 ctx.breaks.push(el.clone());
                 ctx.continues.push(sl.clone());
-                let base = ctx.order.len();
                 for st in &body.stmts {
                     if !matches!(ctx.b.func.blocks[ctx.b.cur].term, Term::Unreachable) {
                         break;
@@ -479,8 +490,8 @@ impl<'a> Lowerer<'a> {
                 }
                 ctx.b.position(sb);
                 let iv2 = ctx.b.load(ia, ity.clone());
-                let one = ctx.b.const_int(1);
-                let inc = ctx.b.binop(IrBin::Add, ity.clone(), iv2, one);
+                let stepv2 = ctx.b.load(sta, ity.clone());
+                let inc = ctx.b.binop(IrBin::Add, ity.clone(), iv2, stepv2);
                 ctx.b.store(ia, inc, ity.clone());
                 ctx.b.br(&cl);
                 ctx.b.position(eb);
@@ -1303,6 +1314,8 @@ impl<'a> Lowerer<'a> {
 
     fn try_expr(&mut self, ctx: &mut FnCtx, inner: &TExpr, ty: &IrType) -> Result<V, String> {
         // `try expr` : expr は Result<T,E>。Err なら関数から Err をそのまま返す。
+        // 変換対象・返却対象は inner の型（Result<T,E>）であり、`?` 全体の型 ty は Ok ペイロード。
+        let result_ir = self.conv(&inner.ty)?;
         let rv = self.expr(ctx, inner)?;
         let tagp = ctx.b.addr_off(rv, 0);
         let tag = ctx.b.load(tagp, IrType::Usize);
@@ -1314,15 +1327,16 @@ impl<'a> Lowerer<'a> {
         let _ = ol;
         ctx.b.position(_errb);
         // Err 返却: 戻り値型が同一 Result である前提でタグを Err に付け替えて返す
-        let retcell = ctx.b.alloca(ty.clone());
-        ctx.b.copy_agg(retcell, rv, ty.clone());
+        let retcell = ctx.b.alloca(result_ir.clone());
+        ctx.b.copy_agg(retcell, rv, result_ir.clone());
         let rtagp = ctx.b.addr_off(retcell, 0);
         let one = ctx.b.const_int(1); // Err
         ctx.b.store(rtagp, one, IrType::Usize);
         ctx.b.ret(Some(retcell));
         ctx.b.position(okb);
         // Ok ペイロードの取り出し
-        let payload_ty = self.result_ok_payload(ty)?;
+        let _ = ty;
+        let payload_ty = self.result_ok_payload(&result_ir)?;
         let pp = ctx.b.addr_off(rv, Self::payload_off(0));
         if is_val_ptr(&payload_ty) {
             Ok(ctx.b.load(pp, cell_ty(&payload_ty)))
@@ -1471,6 +1485,46 @@ impl<'a> Lowerer<'a> {
                     }
                     other => Err(format!("len requires array or string, got `{}`", other.display())),
                 }
+            }
+            Intrinsic::StrLen => {
+                let v = self.expr(ctx, &args[0])?;
+                let lp = ctx.b.addr_off(v, 8);
+                Ok(ctx.b.load(lp, IrType::Usize))
+            }
+            Intrinsic::StrAsPtr | Intrinsic::StrAsMutPtr => {
+                let v = self.expr(ctx, &args[0])?;
+                let dp = ctx.b.addr_off(v, 0);
+                Ok(ctx.b.load(dp, IrType::Ptr(Rc::new(IrType::U8))))
+            }
+            Intrinsic::StrFromCStr => {
+                let v = self.expr(ctx, &args[0])?;
+                Ok(ctx
+                    .b
+                    .call("__ngs_str_from_cstr", vec![v], IrType::Str)
+                    .ok_or("__ngs_str_from_cstr failed")?)
+            }
+            Intrinsic::StrFromUtf8 => {
+                let v = self.expr(ctx, &args[0])?;
+                let n = self.expr(ctx, &args[1])?;
+                let n64 = self.cast_value_simple(ctx, self.conv(&args[1].ty)?, n, IrType::Usize)?;
+                Ok(ctx
+                    .b
+                    .call("__ngs_str_from_utf8", vec![v, n64], IrType::Str)
+                    .ok_or("__ngs_str_from_utf8 failed")?)
+            }
+            Intrinsic::StrToUpper => {
+                let v = self.expr(ctx, &args[0])?;
+                Ok(ctx
+                    .b
+                    .call("__ngs_str_to_upper", vec![v], IrType::Str)
+                    .ok_or("__ngs_str_to_upper failed")?)
+            }
+            Intrinsic::StrToLower => {
+                let v = self.expr(ctx, &args[0])?;
+                Ok(ctx
+                    .b
+                    .call("__ngs_str_to_lower", vec![v], IrType::Str)
+                    .ok_or("__ngs_str_to_lower failed")?)
             }
             Intrinsic::ListNew => {
                 let esz = self.list_elem_size(args, sema_ret)?;

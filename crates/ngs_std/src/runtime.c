@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <stdint.h>
 
 typedef struct {
@@ -108,6 +109,52 @@ double __ngs_str_to_f64(NgsStrCell *c) {
     buf[n] = '\0';
     return strtod(buf, NULL);
 }
+
+/* C のヌル終端文字列から NagiScript 文字列セルを生成（コピー） */
+NgsStrCell *__ngs_str_from_cstr(const char *data) {
+    NgsStrCell *c = (NgsStrCell *)malloc(sizeof(NgsStrCell));
+    if (!c) abort();
+    size_t len = data ? strlen(data) : 0;
+    char *copy = (char *)malloc(len + 1);
+    if (!copy) abort();
+    if (len) memcpy(copy, data, len);
+    copy[len] = '\0';
+    c->data = copy;
+    c->len = len;
+    return c;
+}
+
+/* 長さ付きバイト列から NagiScript 文字列セルを生成（コピー） */
+NgsStrCell *__ngs_str_from_utf8(const char *data, uint64_t len) {
+    NgsStrCell *c = (NgsStrCell *)malloc(sizeof(NgsStrCell));
+    if (!c) abort();
+    char *copy = (char *)malloc((size_t)len + 1);
+    if (!copy) abort();
+    if (len) memcpy(copy, data, (size_t)len);
+    copy[len] = '\0';
+    c->data = copy;
+    c->len = len;
+    return c;
+}
+
+/* 大文字/小文字変換（ASCII のみ・コピーを返す） */
+static NgsStrCell *ngs_str_transform(NgsStrCell *c, int upper) {
+    NgsStrCell *out = (NgsStrCell *)malloc(sizeof(NgsStrCell));
+    if (!out) abort();
+    char *copy = (char *)malloc(c->len + 1);
+    if (!copy) abort();
+    for (uint64_t i = 0; i < c->len; i++) {
+        unsigned char ch = (unsigned char)c->data[i];
+        copy[i] = (char)(upper ? toupper(ch) : tolower(ch));
+    }
+    copy[c->len] = '\0';
+    out->data = copy;
+    out->len = c->len;
+    return out;
+}
+
+NgsStrCell *__ngs_str_to_upper(NgsStrCell *c) { return ngs_str_transform(c, 1); }
+NgsStrCell *__ngs_str_to_lower(NgsStrCell *c) { return ngs_str_transform(c, 0); }
 
 /* ------------------------------------------------------------------ */
 /* List<T>                                                             */

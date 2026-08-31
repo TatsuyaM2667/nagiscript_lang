@@ -575,6 +575,7 @@ fn keyword_or_ident(text: &[u8]) -> TokenKind {
         b"return" => KwReturn,
         b"impl" => KwImpl,
         b"in" => KwIn,
+        b"step" => KwStep,
         b"as" => KwAs,
         b"break" => KwBreak,
         b"continue" => KwContinue,

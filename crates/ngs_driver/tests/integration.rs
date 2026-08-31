@@ -297,3 +297,186 @@ fn match_missing_variant_non_exhaustive() {
     assert_eq!(code, 1);
     assert!(se.contains("missing variant(s) Blue"), "stderr={se}");
 }
+
+#[test]
+fn try_operator_propagates_err_from_result() {
+    let p = write_tmp(
+        "try_result.ngs",
+        r#"
+fn divide(a: f64, b: f64) -> Result<f64, str> {
+    if b == 0.0 { return Result.Err("div by zero") }
+    return Result.Ok(a / b)
+}
+fn chain(a: f64, b: f64) -> Result<f64, str> {
+    val x = divide(a, b)?
+    val y = divide(x, 2.0)?
+    return Result.Ok(y)
+}
+fn main() {
+    match chain(10.0, 2.0) { Result.Ok(v) => println(v) Result.Err(e) => println(e) }
+    match chain(10.0, 0.0) { Result.Ok(v) => println(v) Result.Err(e) => println(e) }
+}
+"#,
+    );
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "2.5\ndiv by zero\n");
+}
+
+#[test]
+fn try_operator_works_with_option() {
+    let p = write_tmp(
+        "try_option.ngs",
+        r#"
+fn maybe(v: i32) -> Option<i32> {
+    if v > 0 { return Option.Some(v) }
+    return Option.None()
+}
+fn chain(v: i32) -> Option<i32> {
+    val x = maybe(v)?
+    return Option.Some(x * 10)
+}
+fn main() {
+    match chain(5) { Option.Some(v) => println(v) Option.None() => println("none") }
+    match chain(-1) { Option.Some(v) => println(v) Option.None() => println("none") }
+}
+"#,
+    );
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "50\nnone\n");
+}
+
+#[test]
+fn try_operator_rejected_outside_result_function() {
+    let p = write_tmp(
+        "try_bad.ngs",
+        "fn f() -> Result<i32, str> { return Result.Ok(1) }\nfn main() { val x = f()?; }\n",
+    );
+    let (code, _so, se) = run(&["check", p.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(se.contains("only allowed in a function returning"), "stderr={se}");
+}
+
+#[test]
+fn string_methods_and_str_type() {
+    let p = write_tmp(
+        "str_methods.ngs",
+        r#"
+fn main() {
+    val s = "Hello World"
+    println(s.len())
+    println(s.to_upper())
+    println(s.to_lower())
+    unsafe {
+        val p = s.as_ptr()
+        println(str.from_cstr(p))
+    }
+}
+"#,
+    );
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "11\nHELLO WORLD\nhello world\nHello World\n");
+}
+
+#[test]
+fn extern_declaration_emits_declare_in_ir() {
+    let p = write_tmp(
+        "extern_decl.ngs",
+        r#"
+extern "C" fn my_add(a: i32, b: i32) -> i32
+fn main() { println(my_add(20, 22)) }
+"#,
+    );
+    let (code, so, se) = run(&["ir", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert!(so.contains("declare fn my_add"), "stdout={so}");
+}
+
+#[test]
+fn str_type_is_recognized() {
+    let p = write_tmp("str_type.ngs", "fn greet(s: str) { println(s) }\nfn main() { greet(\"hi\") }\n");
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "hi\n");
+}
+
+#[test]
+fn for_range_with_step_ascending_and_descending() {
+    let p = write_tmp(
+        "for_step.ngs",
+        r#"
+fn main() {
+    for i in 0..10 step 2 { println(i) }
+    for i in 10..0 step -3 { println(i) }
+}
+"#,
+    );
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "0\n2\n4\n6\n8\n10\n7\n4\n1\n");
+}
+
+#[test]
+fn loop_variable_redeclared_in_second_loop() {
+    let p = write_tmp(
+        "loop_redecl.ngs",
+        r#"
+fn main() {
+    for i in 0..3 { println(i) }
+    for i in 3..0 step -1 { println(i) }
+}
+"#,
+    );
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "0\n1\n2\n3\n2\n1\n");
+}
+
+#[test]
+fn if_else_as_return_body_and_recursion() {
+    let p = write_tmp(
+        "tail_if.ngs",
+        r#"
+fn classify(n: i32) -> str { if n > 0 { "pos" } else { "non-pos" } }
+fn fib(n: i32) -> i32 { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
+fn main() {
+    println(classify(5))
+    println(classify(-1))
+    println(fib(10))
+}
+"#,
+    );
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "pos\nnon-pos\n55\n");
+}
+
+#[test]
+fn missing_return_path_rejected() {
+    let p = write_tmp(
+        "miss_ret.ngs",
+        "fn f(x: bool) -> i32 { if x { return 1; } }\nfn main() {}\n",
+    );
+    let (code, _so, se) = run(&["check", p.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(se.contains("without returning"), "stderr={se}");
+}
+
+#[test]
+fn array_length_method_and_len_function() {
+    let p = write_tmp(
+        "array_len.ngs",
+        r#"
+fn main() {
+    val a = [10, 20, 30]
+    println(a.len())
+    println(len([1, 2, 3, 4]))
+}
+"#,
+    );
+    let (code, so, se) = run(&["run", p.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={se}");
+    assert_eq!(so, "3\n4\n");
+}

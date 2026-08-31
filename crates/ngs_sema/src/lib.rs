@@ -221,7 +221,7 @@ pub enum TStmt {
     Expr(TExpr),
     Return(Option<TExpr>),
     While(TExpr, TBlock),
-    ForRange(String, Ty, TExpr, TExpr, TBlock),
+    ForRange(String, Ty, TExpr, TExpr, Option<TExpr>, TBlock),
     ForC(Option<Box<TStmt>>, Option<TExpr>, Option<Box<TStmt>>, TBlock),
     Break,
     Continue,
@@ -251,6 +251,13 @@ pub enum Intrinsic {
     /// parts の Text はそのまま出力、Expr は型に応じた print 呼び出しへ。
     PrintFStr { newline: bool, parts: Vec<TFStringPart> },
     Len,
+    StrLen,
+    StrAsPtr,
+    StrAsMutPtr,
+    StrFromCStr,
+    StrFromUtf8,
+    StrToUpper,
+    StrToLower,
     Panic,
     Abort,
     SizeOfStr,
@@ -539,12 +546,16 @@ impl Checker {
         let mut mains = 0;
         for item in &file.items {
             if let Item::Fn(fd) = item {
-                if fd.body.is_some() && fd.type_params.is_empty() {
-                    if fd.name == "main" {
-                        mains += 1;
-                        self.out.has_main = true;
+                if fd.type_params.is_empty() {
+                    // 本体ありのユーザー関数、または C シンボルとして解決すべき extern 宣言。
+                    // extern は利用有無にかかわらずシンボル宣言として成果物に含める必要がある。
+                    if fd.body.is_some() || fd.extern_abi.is_some() {
+                        if fd.name == "main" {
+                            mains += 1;
+                            self.out.has_main = true;
+                        }
+                        self.pending.push((fd.name.clone(), vec![]));
                     }
-                    self.pending.push((fd.name.clone(), vec![]));
                 }
             }
         }
@@ -636,7 +647,18 @@ impl Checker {
         self.unsafe_depth = 0;
         self.loop_depth = 0;
 
+        let body_span = body.span;
         let tbody = self.check_block(&body, Some(&ret))?;
+        // 非void関数は本体の全経路で値を返す（or return）必要がある
+        if ret != Ty::Void && !Self::block_guarantees_value(&tbody) {
+            return Err(SemaError {
+                msg: format!(
+                    "function can reach the end of its body without returning `{}`",
+                    ret.display()
+                ),
+                span: body_span,
+            });
+        }
         self.pop_scopes_to(1);
 
         let is_main = tpl.owner_type.is_none() && tpl.name == "main";
@@ -678,7 +700,7 @@ impl Checker {
                 let prim = match name.as_str() {
                     "void" => Some(Ty::Void),
                     "bool" => Some(Ty::Bool),
-                    "string" => Some(Ty::Str),
+                    "string" | "str" => Some(Ty::Str),
                     "i8" => Some(Ty::I8),
                     "i16" => Some(Ty::I16),
                     "i32" => Some(Ty::I32),
@@ -856,6 +878,47 @@ impl Checker {
         self.errors.push(SemaError { msg, span });
     }
 
+    /// ブロックを実行したとき、制御がブロック末尾を「素通り」しない（=必ず
+    /// 値を返す or return する）ことを検証する。非void関数の本体チェックに使う。
+    fn block_guarantees_value(b: &TBlock) -> bool {
+        for st in &b.stmts {
+            if Self::stmt_diverges(st) {
+                return true;
+            }
+        }
+        match &b.tail {
+            Some(t) => Self::expr_diverges_or_value(t),
+            None => false,
+        }
+    }
+
+    /// 文が末尾へ制御を流さないことを保証するか
+    fn stmt_diverges(st: &TStmt) -> bool {
+        match st {
+            TStmt::Return(_) => true,
+            TStmt::Expr(e) => Self::expr_diverges_or_value(e),
+            _ => false,
+        }
+    }
+
+    /// 式が「値を返す or return する」ことで、囲みブロックの続きへ制御を
+    /// 流さないことを保証するか。
+    fn expr_diverges_or_value(e: &TExpr) -> bool {
+        if e.ty == Ty::Void {
+            return false;
+        }
+        match &e.kind {
+            TExprKind::Block(b) => Self::block_guarantees_value(b),
+            TExprKind::If { then_body, else_body, .. } => match else_body {
+                Some(x) => Self::block_guarantees_value(then_body) && Self::expr_diverges_or_value(x),
+                None => false,
+            },
+            // sema 側で網羅性を検証済みのため、全アームが値を返す/returnすれば十分
+            TExprKind::Match { arms, .. } => arms.iter().all(|a| Self::expr_diverges_or_value(&a.body)),
+            _ => true,
+        }
+    }
+
     fn check_block(&mut self, b: &ngs_ast::Block, expect_tail: Option<&Ty>) -> Result<TBlock, SemaError> {
         self.push_scope();
         let scope_depth = self.scopes.len();
@@ -966,7 +1029,7 @@ impl Checker {
                 self.loop_depth -= 1;
                 Ok(TStmt::While(c, b))
             }
-            Stmt::ForRange { var, start, end, body, .. } => {
+            Stmt::ForRange { var, start, end, step, body, .. } => {
                 let se = self.check_expr(start)?;
                 if !se.ty.is_int() {
                     self.err("range-for bounds must be integers".into(), start.span);
@@ -982,13 +1045,30 @@ impl Checker {
                         end.span,
                     );
                 }
+                let ste = match step {
+                    Some(s) => {
+                        let te = self.check_expr_expected(s, Some(&se.ty))?;
+                        if te.ty != se.ty {
+                            self.err(
+                                format!(
+                                    "range-for step type differs: {} vs {}",
+                                    te.ty.display(),
+                                    se.ty.display()
+                                ),
+                                s.span,
+                            );
+                        }
+                        Some(te)
+                    }
+                    None => None,
+                };
                 self.push_scope();
                 self.loop_depth += 1;
                 self.declare_var(var.clone(), se.ty.clone(), false);
                 let b = self.check_block(body, None)?;
                 self.loop_depth -= 1;
                 self.pop_scope();
-                Ok(TStmt::ForRange(var.clone(), se.ty.clone(), se, ee, b))
+                Ok(TStmt::ForRange(var.clone(), se.ty.clone(), se, ee, ste, b))
             }
             Stmt::ForC { init, cond, step, body, .. } => {
                 self.push_scope();
@@ -1377,6 +1457,19 @@ impl Checker {
                         })
                     }
                 };
+                // `?` は現在の関数の戻り値型と同じ Result/Option に対してのみ使用可能。
+                // 下流の lowering が「Err になったらそのまま返す」ことを前提としているため。
+                if self.cur_ret != ie.ty {
+                    return Err(SemaError {
+                        msg: format!(
+                            "`?` on `{}` is only allowed in a function returning the same `{}` (this function returns `{}`)",
+                            ie.ty.display(),
+                            ie.ty.display(),
+                            self.cur_ret.display()
+                        ),
+                        span: e.span,
+                    });
+                }
                 Ok(mk(Try(Box::new(ie)), ok_ty, e.span))
             }
             ExprKind::Lambda { .. } => Err(SemaError {
@@ -1667,6 +1760,47 @@ impl Checker {
                 }
                 _ => {}
             },
+            Ty::Str => match method {
+                // 文字列メソッド
+                "len" => {
+                    return Ok(mk(Call(Callee::Intrinsic(Intrinsic::StrLen), vec![recv]), Ty::Usize, span));
+                }
+                "as_ptr" => {
+                    return Ok(mk(
+                        Call(Callee::Intrinsic(Intrinsic::StrAsPtr), vec![recv]),
+                        Ty::Ptr(Rc::new(Ty::U8)),
+                        span,
+                    ));
+                }
+                "as_mut_ptr" => {
+                    return Ok(mk(
+                        Call(Callee::Intrinsic(Intrinsic::StrAsMutPtr), vec![recv]),
+                        Ty::Ptr(Rc::new(Ty::U8)),
+                        span,
+                    ));
+                }
+                "to_upper" => {
+                    return Ok(mk(
+                        Call(Callee::Intrinsic(Intrinsic::StrToUpper), vec![recv]),
+                        Ty::Str,
+                        span,
+                    ));
+                }
+                "to_lower" => {
+                    return Ok(mk(
+                        Call(Callee::Intrinsic(Intrinsic::StrToLower), vec![recv]),
+                        Ty::Str,
+                        span,
+                    ));
+                }
+                _ => {}
+            },
+            Ty::Array(..) => match method {
+                "len" => {
+                    return Ok(mk(Call(Callee::Intrinsic(Intrinsic::Len), vec![recv]), Ty::Usize, span));
+                }
+                _ => {}
+            },
             _ => {}
         }
         Err(SemaError {
@@ -1850,6 +1984,53 @@ impl Checker {
                                 span,
                             ));
                         }
+                        // str::from_cstr / str::from_utf8（C 文字列 → NagiScript 文字列）
+                        if tn == "str" || tn == "string" {
+                            match second.as_str() {
+                                "from_cstr" => {
+                                    if args.len() != 1 {
+                                        return Err(SemaError { msg: "str::from_cstr takes a pointer".into(), span });
+                                    }
+                                    let a = self.check_expr(&args[0])?;
+                                    if !a.ty.is_ptr() {
+                                        return Err(SemaError {
+                                            msg: format!("str::from_cstr requires a pointer, got `{}`", a.ty.display()),
+                                            span,
+                                        });
+                                    }
+                                    return Ok(mk(
+                                        Call(Callee::Intrinsic(Intrinsic::StrFromCStr), vec![a]),
+                                        Ty::Str,
+                                        span,
+                                    ));
+                                }
+                                "from_utf8" => {
+                                    if args.len() != 2 {
+                                        return Err(SemaError { msg: "str::from_utf8 takes a pointer and a length".into(), span });
+                                    }
+                                    let p = self.check_expr(&args[0])?;
+                                    let n = self.check_expr(&args[1])?;
+                                    if !p.ty.is_ptr() {
+                                        return Err(SemaError {
+                                            msg: format!("str::from_utf8 requires a pointer, got `{}`", p.ty.display()),
+                                            span,
+                                        });
+                                    }
+                                    if !n.ty.is_int() && n.ty != Ty::Usize && n.ty != Ty::Isize {
+                                        return Err(SemaError {
+                                            msg: format!("str::from_utf8 length must be an integer, got `{}`", n.ty.display()),
+                                            span,
+                                        });
+                                    }
+                                    return Ok(mk(
+                                        Call(Callee::Intrinsic(Intrinsic::StrFromUtf8), vec![p, n]),
+                                        Ty::Str,
+                                        span,
+                                    ));
+                                }
+                                _ => {}
+                            }
+                        }
                         // Enum.Variant(payload)
                         if let Some((eid, _, _)) = self.lookup_enum(tn) {
                             if self.enums[eid].variants.iter().any(|(vn, _)| vn == second) {
@@ -2022,6 +2203,18 @@ impl Checker {
                         msg: "use `match` on the Result instead (methods is_ok/is_err land in Stage 5)".into(),
                         span,
                     });
+                }
+                _ => {}
+            },
+            Ty::Str => {
+                return self.resolve_method_call(recv, recv_ty, method, span);
+            }
+            Ty::Array(..) => match method {
+                "len" => {
+                    if !args.is_empty() {
+                        return Err(SemaError { msg: "array.len takes no arguments".into(), span });
+                    }
+                    return Ok(mk(Call(Callee::Intrinsic(Intrinsic::Len), vec![recv]), Ty::Usize, span));
                 }
                 _ => {}
             },

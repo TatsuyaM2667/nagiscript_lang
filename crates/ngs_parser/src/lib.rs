@@ -359,6 +359,22 @@ impl Parser {
             if self.at_eof() {
                 return Err(ParseError { msg: "unterminated block".into(), span: self.peek().span });
             }
+            // if / match は式でもあり、値を持つ。末尾（RBrace直前）に置いた場合は
+            // 返り値の tail 式として扱い、それ以外は値を捨てる式文にする。
+            // （unsafe / ブロック式は従来どおり文として扱う）
+            match self.peek_kind() {
+                TokenKind::KwIf | TokenKind::KwMatch => {
+                    let expr = self.parse_expr()?;
+                    if self.at(&TokenKind::RBrace) {
+                        tail = Some(Box::new(expr));
+                    } else {
+                        stmts.push(Stmt::Expr(expr));
+                        self.eat(&TokenKind::Semi);
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             if self.starts_statement_keyword() {
                 stmts.push(self.parse_stmt()?);
                 self.eat(&TokenKind::Semi);
@@ -471,9 +487,14 @@ impl Parser {
                 let start_e = self.parse_expr()?;
                 self.expect(&TokenKind::DotDot, "`..` in range-for")?;
                 let end_e = self.parse_expr()?;
+                let step = if self.eat(&TokenKind::KwStep) {
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
                 let body = self.parse_block()?;
                 let span = Span::new(kw.span.lo, body.span.hi);
-                return Ok(Stmt::ForRange { var, start: start_e, end: end_e, body, span });
+                return Ok(Stmt::ForRange { var, start: start_e, end: end_e, step, body, span });
             }
         }
         self.pos = save;

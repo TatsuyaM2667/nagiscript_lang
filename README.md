@@ -70,7 +70,7 @@ nagiscript dts main.ngs     # TypeScript 型定義生成
 | `ngs_std`（C ランタイム: print, alloc, Rc 等） | ✅ 実装済み |
 | `nagiscript` CLI | ✅ 完成（check / ir / build / run / dts / wasm / init） |
 
-**テスト**: 96件全てパス
+**テスト**: 105件全てパス
 
 ### 必要ツール（ビルド時）
 
@@ -223,6 +223,14 @@ while i < 10 {
 for k in 0..100 {        // レンジ for（終端は含まない）
     print(k)
 }
+
+for k in 0..10 step 2 {  // 任意の増分（step）を指定
+    print(k)
+}
+
+for k in 10..0 step -1 { // 負の step で降順ループ
+    print(k)
+}
 ```
 
 ### List と Rc（組込みコレクション）
@@ -351,7 +359,7 @@ nagiscript_lang/
 ## テスト
 
 ```bash
-cargo test --all            # 全96件
+cargo test --all            # 全105件
 cargo test -p ngs_lexer     # 字句解析のみ
 cargo test -p ngs_parser    # 構文解析のみ
 cargo test -p ngs_sema      # 型検査のみ
@@ -380,7 +388,7 @@ cargo test -p ngs_driver    # CLI 統合テストのみ
 - [x] Wasm codegen（.wasm + .d.ts 生成）
 - [x] ランタイム（ngs_std: print, Rc, List, alloc 等）
 - [x] CLI ドライバ（check / ir / build / run / dts / wasm / init）
-- [x] テスト（96件、全パス）
+- [x] テスト（105件、全パス）
 - [ ] ネイティブビルドの統合テスト改善（llc / cc 依存テストのCI化）
 - [ ] Wasm×React デモアプリ
 - [ ] Stage 8: `.ngsx` UIコンポーネント、セルフホスト
